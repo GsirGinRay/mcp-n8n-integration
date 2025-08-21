@@ -5,7 +5,7 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "start": "echo \"n8n Workflow Manager Ready!\" && workflow-manager help",
+    "start": "node n8n-mcp",
     "setup": "echo \"Setting up n8n MCP integration...\" && npx @czlonkowski/n8n-mcp@latest --help",
     "test": "echo \"Testing workflow management...\" && workflow-manager list"
   },
