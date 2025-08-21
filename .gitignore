@@ -1,0 +1,59 @@
+# 敏感配置文件 (包含真實 API Key)
+claude-desktop-config.json
+.env*
+**/api-keys/
+**/credentials/
+*-API-KEY.txt
+*.key
+config.local.*
+**/secrets.*
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 個人工作流和資料 (保留當前文件但忽略未來新增)
+workflows/backup/*
+workflows/current/.env
+workflows/current/config.local.*
+workflows/current/*-private.*
+
+# 日誌檔案
+*.log
+logs/
+
+# 暫存檔案
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+
+# IDE 設定
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系統檔案
+desktop.ini
+
+# 本地測試檔案
+test-data/
+debug-output/
+local-*/
+
+# 執行時生成的檔案
+*.pid
+
+# 個人筆記和草稿
+PRIVATE_NOTES.md
+TODO-PERSONAL.md
+
+# 避免提交冗余/測試檔案
+**/test-*.bat
+**/debug-*.bat
+**/*-backup.*
+**/*-old.*
+src/test/

@@ -1,0 +1,288 @@
+{
+  "name": "Google Drive to Supabase Sync - Fixed",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [120, 300],
+      "id": "schedule-trigger",
+      "name": "定時同步觸發器"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "list",
+        "filters": {
+          "name": "*.csv"
+        },
+        "options": {
+          "fields": "files(id,name,mimeType,modifiedTime,size)"
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [320, 300],
+      "id": "list-csv-files",
+      "name": "掃描CSV文件"
+    },
+    {
+      "parameters": {
+        "functionCode": "// 處理Google Drive文件列表\nconst files = $input.first().json.files || [];\n\n// 過濾CSV文件並準備處理\nconst csvFiles = files.filter(file => {\n  return file.name.toLowerCase().endsWith('.csv') && file.size > 0;\n});\n\nconsole.log(`找到 ${csvFiles.length} 個CSV文件`);\n\nreturn csvFiles.map(file => ({\n  json: {\n    fileId: file.id,\n    fileName: file.name,\n    fileSize: file.size,\n    modifiedTime: file.modifiedTime,\n    mimeType: file.mimeType\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [520, 300],
+      "id": "process-file-list",
+      "name": "處理文件列表"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "download",
+        "fileId": "={{ $json.fileId }}"
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [720, 300],
+      "id": "download-csv",
+      "name": "下載CSV文件"
+    },
+    {
+      "parameters": {
+        "functionCode": "// CSV文件解析器\nconst fileInfo = $node['處理文件列表'].json;\nconst binaryData = $input.first().binary;\n\nif (!binaryData || !binaryData.data) {\n  throw new Error('無法獲取文件數據');\n}\n\nlet csvContent;\ntry {\n  csvContent = Buffer.from(binaryData.data, 'base64').toString('utf-8');\n} catch (error) {\n  throw new Error('無法解析文件內容: ' + error.message);\n}\n\nconst lines = csvContent.split('\\n').filter(line => line.trim());\n\nif (lines.length < 2) {\n  throw new Error('CSV文件必須至少包含標題行和一行數據');\n}\n\n// 解析標題行\nconst headers = lines[0].split(',').map(h => {\n  return h.trim().replace(/\"/g, '').toLowerCase().replace(/[^a-z0-9]/g, '_');\n});\n\n// 解析數據行\nconst records = [];\nfor (let i = 1; i < Math.min(lines.length, 1001); i++) { // 限制1000行\n  const values = lines[i].split(',').map(v => v.trim().replace(/\"/g, ''));\n  \n  if (values.length === headers.length) {\n    const record = {};\n    headers.forEach((header, index) => {\n      record[header] = values[index] || null;\n    });\n    records.push(record);\n  }\n}\n\n// 生成表名\nconst tableName = fileInfo.fileName\n  .replace(/\\.csv$/i, '')\n  .toLowerCase()\n  .replace(/[^a-z0-9]/g, '_')\n  .substring(0, 50);\n\nreturn {\n  tableName,\n  headers,\n  records,\n  recordCount: records.length,\n  fileInfo\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [920, 300],
+      "id": "parse-csv",
+      "name": "解析CSV數據"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.recordCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "id": "has-data",
+      "name": "有數據？"
+    },
+    {
+      "parameters": {
+        "functionCode": "// 創建表的SQL語句\nconst { tableName, headers, records } = $json;\n\n// 生成列定義\nconst columnDefs = headers.map(header => `${header} TEXT`).join(',\\n  ');\n\nconst createTableSQL = `\nCREATE TABLE IF NOT EXISTS ${tableName} (\n  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,\n  ${columnDefs},\n  source_file VARCHAR(255),\n  import_time TIMESTAMP WITH TIME ZONE DEFAULT NOW()\n);\n`;\n\nreturn {\n  createTableSQL,\n  tableName,\n  records,\n  recordCount: records.length\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1320, 250],
+      "id": "create-table-sql",
+      "name": "生成建表SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.createTableSQL }}"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1520, 250],
+      "id": "execute-create-table",
+      "name": "執行建表"
+    },
+    {
+      "parameters": {
+        "functionCode": "// 準備插入數據\nconst { tableName, records } = $node['生成建表SQL'].json;\nconst fileInfo = $node['解析CSV數據'].json.fileInfo;\n\n// 為每筆記錄添加元數據\nconst insertRecords = records.map(record => ({\n  ...record,\n  source_file: fileInfo.fileName,\n  import_time: new Date().toISOString()\n}));\n\nreturn {\n  tableName,\n  insertRecords,\n  batchSize: 50 // 每批50筆\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1520, 350],
+      "id": "prepare-insert-data",
+      "name": "準備插入數據"
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1720, 350],
+      "id": "split-batches",
+      "name": "分批處理"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "={{ $node['準備插入數據'].json.tableName }}",
+        "records": "={{ $node['準備插入數據'].json.insertRecords.slice($node.context.currentRunIndex * 50, ($node.context.currentRunIndex + 1) * 50) }}"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1920, 350],
+      "id": "insert-batch",
+      "name": "批量插入"
+    },
+    {
+      "parameters": {
+        "functionCode": "// 統計結果\nconst results = $input.all();\nconst tableName = $node['準備插入數據'].json.tableName;\nconst totalRecords = $node['準備插入數據'].json.insertRecords.length;\n\nconst summary = {\n  success: true,\n  tableName,\n  totalRecords,\n  batchesProcessed: results.length,\n  completedAt: new Date().toISOString()\n};\n\nconsole.log('數據導入完成:', summary);\nreturn summary;"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2120, 350],
+      "id": "import-summary",
+      "name": "導入結果統計"
+    }
+  ],
+  "connections": {
+    "定時同步觸發器": {
+      "main": [
+        [
+          {
+            "node": "掃描CSV文件",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "掃描CSV文件": {
+      "main": [
+        [
+          {
+            "node": "處理文件列表",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "處理文件列表": {
+      "main": [
+        [
+          {
+            "node": "下載CSV文件",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "下載CSV文件": {
+      "main": [
+        [
+          {
+            "node": "解析CSV數據",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析CSV數據": {
+      "main": [
+        [
+          {
+            "node": "有數據？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "有數據？": {
+      "main": [
+        [
+          {
+            "node": "生成建表SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成建表SQL": {
+      "main": [
+        [
+          {
+            "node": "執行建表",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "準備插入數據",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "準備插入數據": {
+      "main": [
+        [
+          {
+            "node": "分批處理",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "分批處理": {
+      "main": [
+        [
+          {
+            "node": "批量插入",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "批量插入": {
+      "main": [
+        [
+          {
+            "node": "導入結果統計",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {},
+  "pinData": {},
+  "triggerCount": 1,
+  "tags": ["google-drive", "supabase", "csv", "data-sync"]
+}

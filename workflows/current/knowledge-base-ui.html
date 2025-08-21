@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧠 小明餐廳 - 智能知識庫管理系統</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/element-plus@2.4.0/dist/index.full.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus@2.4.0/dist/index.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .header {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 20px rgba(0,0,0,0.1);
+        }
+        .main-container {
+            max-width: 1400px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 1.5rem;
+            text-align: center;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+        .content-area {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 2rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        .search-section {
+            margin-bottom: 2rem;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .knowledge-item {
+            border: 1px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            background: #fff;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .knowledge-item:hover {
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+        .knowledge-item::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+        }
+        .category-tag {
+            display: inline-block;
+            padding: 0.3rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            margin-right: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .usage-stats {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        .floating-add-btn {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            transition: transform 0.3s ease;
+        }
+        .floating-add-btn:hover {
+            transform: scale(1.1);
+        }
+        .vip-indicator {
+            background: linear-gradient(45deg, #ffd700, #ff8c00);
+            color: white;
+            padding: 0.2rem 0.6rem;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        .ai-generated {
+            background: linear-gradient(45deg, #4facfe, #00f2fe);
+            color: white;
+        }
+        .needs-review {
+            background: linear-gradient(45deg, #ff6b6b, #feca57);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- 頂部導航 -->
+        <div class="header">
+            <el-row justify="space-between" align="middle">
+                <el-col :span="12">
+                    <h1 style="margin: 0; background: linear-gradient(45deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                        🧠 智能知識庫管理系統
+                    </h1>
+                    <p style="margin: 0.5rem 0 0 0; color: #666;">小明餐廳 AI 助手控制台</p>
+                </el-col>
+                <el-col :span="12" style="text-align: right;">
+                    <el-button type="primary" @click="refreshData" :loading="loading">
+                        <i class="el-icon-refresh"></i> 刷新數據
+                    </el-button>
+                    <el-button type="success" @click="showAddDialog = true">
+                        <i class="el-icon-plus"></i> 新增知識
+                    </el-button>
+                </el-col>
+            </el-row>
+        </div>
+
+        <!-- 主要內容區 -->
+        <div class="main-container">
+            <!-- 統計卡片 -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #667eea;">{{ stats.totalKnowledge }}</div>
+                    <div>📚 總知識條目</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #52c41a;">{{ stats.activeKnowledge }}</div>
+                    <div>✅ 啟用中</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #faad14;">{{ stats.needsReview }}</div>
+                    <div>⚠️ 待審核</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #1890ff;">{{ stats.totalUsage }}</div>
+                    <div>📈 總使用次數</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #722ed1;">{{ stats.vipCustomers }}</div>
+                    <div>👑 VIP 客戶</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #eb2f96;">{{ stats.todayConversations }}</div>
+                    <div>💬 今日對話</div>
+                </div>
+            </div>
+
+            <!-- 知識庫管理區域 -->
+            <div class="content-area">
+                <!-- 搜索和篩選 -->
+                <div class="search-section">
+                    <el-input
+                        v-model="searchQuery"
+                        placeholder="🔍 搜索知識庫內容..."
+                        @input="searchKnowledge"
+                        style="max-width: 300px;"
+                        clearable>
+                    </el-input>
+                    
+                    <el-select v-model="categoryFilter" placeholder="📂 選擇分類" clearable @change="filterKnowledge">
+                        <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat"></el-option>
+                    </el-select>
+                    
+                    <el-select v-model="statusFilter" placeholder="📊 狀態篩選" clearable @change="filterKnowledge">
+                        <el-option label="啟用中" value="active"></el-option>
+                        <el-option label="待審核" value="needs_review"></el-option>
+                        <el-option label="AI生成" value="ai_generated"></el-option>
+                        <el-option label="已停用" value="inactive"></el-option>
+                    </el-select>
+                    
+                    <el-button type="primary" @click="exportKnowledge">
+                        📤 導出知識庫
+                    </el-button>
+                </div>
+
+                <!-- 知識庫列表 -->
+                <div v-loading="loading">
+                    <div v-for="item in filteredKnowledge" :key="item.id" class="knowledge-item">
+                        <el-row justify="space-between" align="top">
+                            <el-col :span="20">
+                                <!-- 分類標籤 -->
+                                <div style="margin-bottom: 1rem;">
+                                    <span class="category-tag" :style="getCategoryColor(item.category)">
+                                        {{ item.category }}
+                                    </span>
+                                    <span v-if="item.subcategory" class="category-tag" style="background: #f0f0f0; color: #666;">
+                                        {{ item.subcategory }}
+                                    </span>
+                                    <span v-if="item.auto_generated" class="category-tag ai-generated">
+                                        🤖 AI生成
+                                    </span>
+                                    <span v-if="item.needs_review" class="category-tag needs-review">
+                                        ⚠️ 待審核
+                                    </span>
+                                </div>
+                                
+                                <!-- 問題和答案 -->
+                                <h3 style="margin: 0 0 0.5rem 0; color: #333;">{{ item.question }}</h3>
+                                <p style="color: #666; margin: 0 0 1rem 0; line-height: 1.6;">{{ item.answer }}</p>
+                                
+                                <!-- 關鍵字 -->
+                                <div style="margin-bottom: 1rem;">
+                                    <el-tag v-for="keyword in item.keywords" :key="keyword" size="small" style="margin-right: 0.5rem;">
+                                        {{ keyword }}
+                                    </el-tag>
+                                </div>
+                                
+                                <!-- 使用統計 -->
+                                <div class="usage-stats">
+                                    <span>📊 使用次數: {{ item.usage_count || 0 }}</span>
+                                    <span>✅ 成功率: {{ ((item.success_rate || 1) * 100).toFixed(1) }}%</span>
+                                    <span>🕒 最後使用: {{ formatDate(item.last_used) }}</span>
+                                    <span>📅 建立時間: {{ formatDate(item.created_at) }}</span>
+                                </div>
+                            </el-col>
+                            
+                            <el-col :span="4" style="text-align: right;">
+                                <el-button size="small" type="primary" @click="editKnowledge(item)">編輯</el-button>
+                                <el-button size="small" type="danger" @click="deleteKnowledge(item.id)">刪除</el-button>
+                                <br><br>
+                                <el-switch 
+                                    v-model="item.is_active" 
+                                    @change="toggleKnowledgeStatus(item)"
+                                    active-text="啟用"
+                                    inactive-text="停用">
+                                </el-switch>
+                            </el-col>
+                        </el-row>
+                    </div>
+                </div>
+
+                <!-- 分頁 -->
+                <el-pagination
+                    v-if="totalPages > 1"
+                    @current-change="handlePageChange"
+                    :current-page="currentPage"
+                    :page-size="pageSize"
+                    :total="totalItems"
+                    layout="prev, pager, next, jumper, total"
+                    style="text-align: center; margin-top: 2rem;">
+                </el-pagination>
+            </div>
+        </div>
+
+        <!-- 新增/編輯知識對話框 -->
+        <el-dialog 
+            v-model="showAddDialog" 
+            :title="editingItem ? '✏️ 編輯知識' : '➕ 新增知識'"
+            width="60%"
+            @close="resetForm">
+            <el-form :model="knowledgeForm" label-width="100px">
+                <el-row :gutter="20">
+                    <el-col :span="12">
+                        <el-form-item label="分類">
+                            <el-select v-model="knowledgeForm.category" placeholder="選擇分類">
+                                <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat"></el-option>
+                            </el-select>
+                        </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                        <el-form-item label="子分類">
+                            <el-input v-model="knowledgeForm.subcategory" placeholder="可選"></el-input>
+                        </el-form-item>
+                    </el-col>
+                </el-row>
+                
+                <el-form-item label="問題">
+                    <el-input v-model="knowledgeForm.question" placeholder="客戶可能問的問題"></el-input>
+                </el-form-item>
+                
+                <el-form-item label="答案">
+                    <el-input 
+                        v-model="knowledgeForm.answer" 
+                        type="textarea" 
+                        :rows="4"
+                        placeholder="AI回應的答案">
+                    </el-input>
+                </el-form-item>
+                
+                <el-form-item label="關鍵字">
+                    <el-input 
+                        v-model="keywordsInput" 
+                        placeholder="用逗號分隔關鍵字"
+                        @blur="updateKeywords">
+                    </el-input>
+                </el-form-item>
+                
+                <el-row :gutter="20">
+                    <el-col :span="8">
+                        <el-form-item label="意圖類型">
+                            <el-select v-model="knowledgeForm.intent_type">
+                                <el-option label="詢問" value="inquiry"></el-option>
+                                <el-option label="抱怨" value="complaint"></el-option>
+                                <el-option label="稱讚" value="compliment"></el-option>
+                                <el-option label="問候" value="greeting"></el-option>
+                            </el-select>
+                        </el-form-item>
+                    </el-col>
+                    <el-col :span="8">
+                        <el-form-item label="信心閾值">
+                            <el-slider v-model="knowledgeForm.confidence_threshold" :min="0" :max="1" :step="0.1"></el-slider>
+                        </el-form-item>
+                    </el-col>
+                    <el-col :span="8">
+                        <el-form-item label="狀態">
+                            <el-switch v-model="knowledgeForm.is_active" active-text="啟用" inactive-text="停用"></el-switch>
+                        </el-form-item>
+                    </el-col>
+                </el-row>
+            </el-form>
+            
+            <template #footer>
+                <el-button @click="showAddDialog = false">取消</el-button>
+                <el-button type="primary" @click="saveKnowledge" :loading="saving">
+                    {{ editingItem ? '更新' : '新增' }}
+                </el-button>
+            </template>
+        </el-dialog>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        const { ElMessage, ElMessageBox } = ElementPlus;
+
+        // Supabase 配置 - 請替換為你的實際配置
+        const supabase = window.supabase.createClient(
+            'YOUR_SUPABASE_URL',
+            'YOUR_SUPABASE_ANON_KEY'
+        );
+
+        createApp({
+            data() {
+                return {
+                    loading: false,
+                    saving: false,
+                    knowledge: [],
+                    filteredKnowledge: [],
+                    categories: ['restaurant_info', 'menu', 'service', 'reservation', 'vip', 'promotion'],
+                    searchQuery: '',
+                    categoryFilter: '',
+                    statusFilter: '',
+                    currentPage: 1,
+                    pageSize: 10,
+                    totalItems: 0,
+                    showAddDialog: false,
+                    editingItem: null,
+                    keywordsInput: '',
+                    knowledgeForm: {
+                        category: 'restaurant_info',
+                        subcategory: '',
+                        question: '',
+                        answer: '',
+                        keywords: [],
+                        intent_type: 'inquiry',
+                        confidence_threshold: 0.8,
+                        is_active: true
+                    },
+                    stats: {
+                        totalKnowledge: 0,
+                        activeKnowledge: 0,
+                        needsReview: 0,
+                        totalUsage: 0,
+                        vipCustomers: 0,
+                        todayConversations: 0
+                    }
+                }
+            },
+            computed: {
+                totalPages() {
+                    return Math.ceil(this.totalItems / this.pageSize);
+                }
+            },
+            async mounted() {
+                await this.loadData();
+            },
+            methods: {
+                async loadData() {
+                    this.loading = true;
+                    try {
+                        await Promise.all([
+                            this.loadKnowledge(),
+                            this.loadStats()
+                        ]);
+                    } catch (error) {
+                        ElMessage.error('載入資料失敗: ' + error.message);
+                    }
+                    this.loading = false;
+                },
+                
+                async loadKnowledge() {
+                    const { data, error } = await supabase
+                        .from('knowledge_base')
+                        .select('*')
+                        .order('usage_count', { ascending: false });
+                    
+                    if (error) throw error;
+                    this.knowledge = data || [];
+                    this.filteredKnowledge = this.knowledge;
+                    this.totalItems = this.knowledge.length;
+                },
+                
+                async loadStats() {
+                    // 載入統計數據
+                    const [knowledge, customers, conversations] = await Promise.all([
+                        supabase.from('knowledge_base').select('*'),
+                        supabase.from('customers').select('*'),
+                        supabase.from('customer_conversations')
+                            .select('*')
+                            .gte('created_at', new Date().toISOString().split('T')[0])
+                    ]);
+                    
+                    this.stats = {
+                        totalKnowledge: knowledge.data?.length || 0,
+                        activeKnowledge: knowledge.data?.filter(k => k.is_active).length || 0,
+                        needsReview: knowledge.data?.filter(k => k.needs_review).length || 0,
+                        totalUsage: knowledge.data?.reduce((sum, k) => sum + (k.usage_count || 0), 0) || 0,
+                        vipCustomers: customers.data?.filter(c => c.is_vip).length || 0,
+                        todayConversations: conversations.data?.length || 0
+                    };
+                },
+                
+                searchKnowledge() {
+                    this.filterKnowledge();
+                },
+                
+                filterKnowledge() {
+                    let filtered = this.knowledge;
+                    
+                    if (this.searchQuery) {
+                        const query = this.searchQuery.toLowerCase();
+                        filtered = filtered.filter(item => 
+                            item.question.toLowerCase().includes(query) ||
+                            item.answer.toLowerCase().includes(query) ||
+                            item.keywords.some(k => k.toLowerCase().includes(query))
+                        );
+                    }
+                    
+                    if (this.categoryFilter) {
+                        filtered = filtered.filter(item => item.category === this.categoryFilter);
+                    }
+                    
+                    if (this.statusFilter) {
+                        switch (this.statusFilter) {
+                            case 'active':
+                                filtered = filtered.filter(item => item.is_active);
+                                break;
+                            case 'needs_review':
+                                filtered = filtered.filter(item => item.needs_review);
+                                break;
+                            case 'ai_generated':
+                                filtered = filtered.filter(item => item.auto_generated);
+                                break;
+                            case 'inactive':
+                                filtered = filtered.filter(item => !item.is_active);
+                                break;
+                        }
+                    }
+                    
+                    this.filteredKnowledge = filtered;
+                    this.totalItems = filtered.length;
+                    this.currentPage = 1;
+                },
+                
+                async saveKnowledge() {
+                    this.saving = true;
+                    try {
+                        const data = { ...this.knowledgeForm };
+                        
+                        if (this.editingItem) {
+                            const { error } = await supabase
+                                .from('knowledge_base')
+                                .update(data)
+                                .eq('id', this.editingItem.id);
+                            if (error) throw error;
+                            ElMessage.success('知識更新成功！');
+                        } else {
+                            const { error } = await supabase
+                                .from('knowledge_base')
+                                .insert([data]);
+                            if (error) throw error;
+                            ElMessage.success('知識新增成功！');
+                        }
+                        
+                        this.showAddDialog = false;
+                        await this.loadData();
+                    } catch (error) {
+                        ElMessage.error('儲存失敗: ' + error.message);
+                    }
+                    this.saving = false;
+                },
+                
+                editKnowledge(item) {
+                    this.editingItem = item;
+                    this.knowledgeForm = { ...item };
+                    this.keywordsInput = item.keywords.join(', ');
+                    this.showAddDialog = true;
+                },
+                
+                async deleteKnowledge(id) {
+                    try {
+                        await ElMessageBox.confirm('確定要刪除這條知識嗎？', '確認刪除');
+                        const { error } = await supabase
+                            .from('knowledge_base')
+                            .delete()
+                            .eq('id', id);
+                        if (error) throw error;
+                        ElMessage.success('刪除成功！');
+                        await this.loadData();
+                    } catch (error) {
+                        if (error !== 'cancel') {
+                            ElMessage.error('刪除失敗: ' + error.message);
+                        }
+                    }
+                },
+                
+                async toggleKnowledgeStatus(item) {
+                    try {
+                        const { error } = await supabase
+                            .from('knowledge_base')
+                            .update({ is_active: item.is_active })
+                            .eq('id', item.id);
+                        if (error) throw error;
+                        ElMessage.success(`知識已${item.is_active ? '啟用' : '停用'}`);
+                    } catch (error) {
+                        ElMessage.error('更新失敗: ' + error.message);
+                        item.is_active = !item.is_active; // 回復狀態
+                    }
+                },
+                
+                updateKeywords() {
+                    this.knowledgeForm.keywords = this.keywordsInput
+                        .split(',')
+                        .map(k => k.trim())
+                        .filter(k => k);
+                },
+                
+                resetForm() {
+                    this.editingItem = null;
+                    this.knowledgeForm = {
+                        category: 'restaurant_info',
+                        subcategory: '',
+                        question: '',
+                        answer: '',
+                        keywords: [],
+                        intent_type: 'inquiry',
+                        confidence_threshold: 0.8,
+                        is_active: true
+                    };
+                    this.keywordsInput = '';
+                },
+                
+                getCategoryColor(category) {
+                    const colors = {
+                        'restaurant_info': 'background: #e6f7ff; color: #1890ff;',
+                        'menu': 'background: #f6ffed; color: #52c41a;',
+                        'service': 'background: #fff2e8; color: #fa8c16;',
+                        'reservation': 'background: #f9f0ff; color: #722ed1;',
+                        'vip': 'background: #fff0f6; color: #eb2f96;',
+                        'promotion': 'background: #feffe6; color: #fadb14;'
+                    };
+                    return colors[category] || 'background: #f0f0f0; color: #666;';
+                },
+                
+                formatDate(dateString) {
+                    if (!dateString) return '未使用';
+                    return new Date(dateString).toLocaleDateString('zh-TW');
+                },
+                
+                handlePageChange(page) {
+                    this.currentPage = page;
+                },
+                
+                async refreshData() {
+                    await this.loadData();
+                    ElMessage.success('資料已刷新！');
+                },
+                
+                exportKnowledge() {
+                    const data = this.filteredKnowledge.map(item => ({
+                        分類: item.category,
+                        子分類: item.subcategory,
+                        問題: item.question,
+                        答案: item.answer,
+                        關鍵字: item.keywords.join(', '),
+                        使用次數: item.usage_count,
+                        成功率: item.success_rate,
+                        狀態: item.is_active ? '啟用' : '停用'
+                    }));
+                    
+                    const csv = this.convertToCSV(data);
+                    this.downloadCSV(csv, 'knowledge-base.csv');
+                    ElMessage.success('知識庫已導出！');
+                },
+                
+                convertToCSV(data) {
+                    const headers = Object.keys(data[0]).join(',');
+                    const rows = data.map(row => Object.values(row).map(val => `"${val}"`).join(','));
+                    return [headers, ...rows].join('\n');
+                },
+                
+                downloadCSV(csv, filename) {
+                    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = filename;
+                    link.click();
+                }
+            }
+        }).use(ElementPlus).mount('#app');
+    </script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+{
+  "testScenarios": [
+    {
+      "name": "基本問候測試",
+      "userMessage": "你好",
+      "expectedResponse": "包含友善問候",
+      "shouldLearn": false
+    },
+    {
+      "name": "營業時間查詢",
+      "userMessage": "請問營業時間是？",
+      "expectedResponse": "週一至週日 11:00 - 22:00",
+      "shouldLearn": true,
+      "expectedPattern": "hours_inquiry"
+    },
+    {
+      "name": "訂位需求",
+      "userMessage": "我想要訂位",
+      "expectedResponse": "收集訂位資訊",
+      "shouldLearn": true,
+      "expectedPattern": "reservation"
+    },
+    {
+      "name": "菜單查詢",
+      "userMessage": "有什麼推薦的餐點嗎？",
+      "expectedResponse": "招牌菜推薦",
+      "shouldLearn": true,
+      "expectedPattern": "menu_inquiry"
+    },
+    {
+      "name": "外送詢問",
+      "userMessage": "可以外送嗎？",
+      "expectedResponse": "外送服務說明",
+      "shouldLearn": true,
+      "expectedPattern": "delivery"
+    }
+  ],
+  "supabaseConfig": {
+    "requiredTables": [
+      "conversation_history",
+      "learning_patterns", 
+      "analytics_data",
+      "user_preferences",
+      "knowledge_base"
+    ],
+    "testQueries": [
+      {
+        "name": "檢查對話記錄",
+        "query": "SELECT COUNT(*) FROM conversation_history WHERE created_at > NOW() - INTERVAL '1 hour'"
+      },
+      {
+        "name": "檢查學習模式",
+        "query": "SELECT pattern_type, COUNT(*) FROM learning_patterns GROUP BY pattern_type"
+      },
+      {
+        "name": "檢查分析數據",
+        "query": "SELECT AVG(response_time) FROM analytics_data WHERE created_at > NOW() - INTERVAL '1 hour'"
+      }
+    ]
+  },
+  "performanceMetrics": {
+    "maxResponseTime": 5000,
+    "minConfidenceScore": 0.7,
+    "expectedLearningRate": 0.8
+  },
+  "n8nCredentials": {
+    "required": [
+      {
+        "name": "Supabase API",
+        "type": "supabaseApi",
+        "fields": ["url", "serviceKey"]
+      },
+      {
+        "name": "OpenAI API", 
+        "type": "openAiApi",
+        "fields": ["apiKey"]
+      },
+      {
+        "name": "LINE Bot",
+        "type": "httpHeaderAuth",
+        "fields": ["headerAuth"]
+      }
+    ]
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "n8n-workflow-manager-mcp",
+  "version": "2.0.0",
+  "description": "🚀 n8n Workflow Management Tool with Professional MCP Integration",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "echo \"n8n Workflow Manager Ready!\" && workflow-manager help",
+    "setup": "echo \"Setting up n8n MCP integration...\" && npx @czlonkowski/n8n-mcp@latest --help",
+    "test": "echo \"Testing workflow management...\" && workflow-manager list"
+  },
+  "keywords": [
+    "mcp",
+    "n8n",
+    "workflow",
+    "automation",
+    "ai",
+    "integration",
+    "one-click",
+    "model-context-protocol"
+  ],
+  "author": "GsirGinRay",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GsirGinRay/mcp-n8n-integration.git"
+  },
+  "bugs": {
+    "url": "https://github.com/GsirGinRay/mcp-n8n-integration/issues"
+  },
+  "homepage": "https://github.com/GsirGinRay/mcp-n8n-integration#readme",
+  "dependencies": {
+    "dotenv": "^16.4.0",
+    "chalk": "^5.3.0"
+  },
+  "optionalDependencies": {
+    "@czlonkowski/n8n-mcp": "latest"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

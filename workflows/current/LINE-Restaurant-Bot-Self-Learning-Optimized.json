@@ -1,0 +1,340 @@
+{
+  "name": "LINE餐廳機器人-自學習優化版(MCP設計)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "line-restaurant-optimized",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 240],
+      "id": "webhook-receiver",
+      "name": "LINE Webhook接收器",
+      "webhookId": "line-restaurant-optimized"
+    },
+    {
+      "parameters": {
+        "functionCode": "// [MCP優化] 增強型訊息解析器\n// 基於n8n專業最佳實踐設計\n\nconst body = $input.first().json.body;\nif (!body?.events || body.events.length === 0) {\n  return [];\n}\n\nconst event = body.events[0];\nconst messageData = {\n  // 基本訊息資訊\n  messageText: event.message?.text || '',\n  messageType: event.message?.type || 'unknown',\n  userId: event.source?.userId || 'anonymous',\n  timestamp: new Date(event.timestamp).toISOString(),\n  messageId: event.message?.id || `msg_${Date.now()}`,\n  replyToken: event.replyToken,\n  \n  // [MCP建議] 增強型分析\n  conversationId: `${event.source?.userId}_${new Date().toDateString()}`,\n  messageLength: (event.message?.text || '').length,\n  hasEmoji: /[\\u{1f300}-\\u{1f5ff}\\u{1f900}-\\u{1f9ff}\\u{1f600}-\\u{1f64f}\\u{1f680}-\\u{1f6ff}\\u{2600}-\\u{26ff}\\u{2700}-\\u{27bf}]/u.test(event.message?.text || ''),\n  \n  // 預分類（自學習基礎）\n  intentHints: {\n    isGreeting: /^(你好|嗨|hi|hello)/i.test(event.message?.text || ''),\n    isReservation: /(訂位|預約|訂桌|booking)/i.test(event.message?.text || ''),\n    isMenu: /(菜單|餐點|推薦|menu|食物)/i.test(event.message?.text || ''),\n    isHours: /(營業|時間|開店|關店|hours)/i.test(event.message?.text || ''),\n    isDelivery: /(外送|送餐|配送|delivery)/i.test(event.message?.text || ''),\n    isContact: /(電話|地址|位置|聯絡|contact)/i.test(event.message?.text || '')\n  }\n};\n\nreturn messageData;"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [320, 240],
+      "id": "message-parser",
+      "name": "🧠 智能訊息解析器"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "select",
+        "table": {
+          "__rl": true,
+          "value": "conversation_history",
+          "mode": "list"
+        },
+        "where": "user_id = '{{ $json.userId }}' AND DATE(created_at) = CURRENT_DATE",
+        "orderBy": "created_at DESC",
+        "limit": 15
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [520, 140],
+      "id": "get-conversation-history",
+      "name": "📚 獲取對話歷史",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-restaurant-bot",
+          "name": "Supabase Restaurant Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "select", 
+        "table": {
+          "__rl": true,
+          "value": "learning_patterns",
+          "mode": "list"
+        },
+        "where": "category = 'restaurant' AND confidence_score > 0.75 AND is_active = true",
+        "orderBy": "confidence_score DESC, usage_count DESC",
+        "limit": 25
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [520, 340],
+      "id": "get-learning-patterns",
+      "name": "🎯 獲取學習模式",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-restaurant-bot",
+          "name": "Supabase Restaurant Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "select",
+        "table": {
+          "__rl": true,
+          "value": "user_preferences", 
+          "mode": "list"
+        },
+        "where": "user_id = '{{ $json.userId }}'",
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [520, 440],
+      "id": "get-user-preferences",
+      "name": "👤 獲取用戶偏好",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-restaurant-bot",
+          "name": "Supabase Restaurant Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// [MCP優化] 智能上下文構建器\n// 整合多維度數據，提供個人化體驗\n\nconst messageData = $node['🧠 智能訊息解析器'].json;\nconst conversationHistory = $node['📚 獲取對話歷史'].json || [];\nconst learningPatterns = $node['🎯 獲取學習模式'].json || [];\nconst userPreferences = $node['👤 獲取用戶偏好'].json?.[0] || {};\n\n// 構建增強系統提示\nlet enhancedPrompt = `你是「小明的餐廳」的專業AI客服助理，具備自學習和個人化服務能力。\n\n【餐廳基本資訊】\n- 店名：小明的餐廳\n- 營業時間：週一至週日 11:00 - 22:00\n- 地址：台北市中山區中山路 123 號\n- 電話：02-1234-5678\n- 服務：內用、外帶、外送（5公里內）\n- 外送平台：Uber Eats、Foodpanda\n- 支付方式：現金、信用卡、Line Pay、Apple Pay\n\n【用戶個人化資訊】\\n`;\n\n// 加入用戶偏好\nif (userPreferences.communication_style) {\n  enhancedPrompt += `- 偏好溝通風格：${userPreferences.communication_style}\\n`;\n}\nif (userPreferences.favorite_topics?.length > 0) {\n  enhancedPrompt += `- 關注話題：${userPreferences.favorite_topics.join(', ')}\\n`;\n}\nif (userPreferences.total_interactions > 0) {\n  enhancedPrompt += `- 互動次數：${userPreferences.total_interactions}次（熟客）\\n`;\n}\n\n// 加入學習模式\nif (learningPatterns.length > 0) {\n  enhancedPrompt += `\\n【AI學習洞察】\\n`;\n  learningPatterns.slice(0, 8).forEach((pattern, index) => {\n    enhancedPrompt += `${index + 1}. ${pattern.pattern_description} (信心度: ${pattern.confidence_score})\\n`;\n  });\n}\n\n// 加入對話歷史摘要\nif (conversationHistory.length > 0) {\n  enhancedPrompt += `\\n【今日對話摘要】\\n`;\n  conversationHistory.slice(0, 5).forEach(conv => {\n    const time = new Date(conv.created_at).toLocaleTimeString('zh-TW', {hour: '2-digit', minute: '2-digit'});\n    enhancedPrompt += `${time}: \"${conv.user_message.substring(0, 30)}...\" → \"${conv.bot_response?.substring(0, 40)}...\"\\n`;\n  });\n}\n\n// 智能意圖分析\nconst detectedIntents = Object.entries(messageData.intentHints)\n  .filter(([key, value]) => value)\n  .map(([key, value]) => key);\n\nif (detectedIntents.length > 0) {\n  enhancedPrompt += `\\n【當前意圖分析】\\n檢測到：${detectedIntents.join(', ')}\\n`;\n}\n\nenhancedPrompt += `\\n【回應指導原則】\n1. 基於用戶歷史偏好提供個人化服務\n2. 參考學習模式提供更精準的回答\n3. 保持親切、專業且高效的服務態度\n4. 對於訂位需求，收集：日期、時間、人數、姓名、電話\n5. 推薦餐點時優先介紹：招牌牛肉麵、麻辣火鍋、蜜汁烤雞\n6. 遇到新問題時詳細回答，以便系統學習\n\n請針對用戶訊息「${messageData.messageText}」提供最佳回應。`;\n\nreturn {\n  enhancedPrompt,\n  messageContext: {\n    ...messageData,\n    hasHistory: conversationHistory.length > 0,\n    learningPatternsCount: learningPatterns.length,\n    isReturningUser: userPreferences.total_interactions > 0,\n    detectedIntents\n  }\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [720, 240],
+      "id": "context-builder",
+      "name": "🎯 智能上下文構建"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.messageContext.messageText }}",
+        "options": {
+          "systemMessage": "={{ $json.enhancedPrompt }}",
+          "temperature": 0.7,
+          "maxTokens": 500
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [920, 240],
+      "id": "ai-agent",
+      "name": "🤖 智能AI助手"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 500,
+          "presencePenalty": 0.1,
+          "frequencyPenalty": 0.1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [920, 440],
+      "id": "openai-model",
+      "name": "🧠 GPT-4o-Mini模型",
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-restaurant-bot",
+          "name": "OpenAI Restaurant Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $node['🎯 智能上下文構建'].json.messageContext.conversationId }}",
+        "contextWindowLength": 25
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [920, 540],
+      "id": "enhanced-memory",
+      "name": "💾 增強記憶系統"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "1flNYeSHD6AOgx0Xvme7L8nngXvJ1vyjOfvfhqvD8tuM",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.6,
+      "position": [920, 640],
+      "id": "google-sheets-tool",
+      "name": "📊 Google表單工具",
+      "credentials": {
+        "googleApi": {
+          "id": "google-sheets-restaurant",
+          "name": "Google Sheets Restaurant"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// [MCP優化] 智能學習分析器\n// 基於專業模式識別演算法\n\nconst messageContext = $node['🎯 智能上下文構建'].json.messageContext;\nconst aiResponse = $json.output || '';\n\n// 高級模式分析\nconst learningAnalysis = {\n  patterns: [],\n  metrics: {\n    responseQuality: 0.8, // 預設品質分數\n    userSatisfactionHint: aiResponse.length > 20 ? 0.8 : 0.6,\n    complexityScore: messageContext.messageText.length / 100\n  }\n};\n\n// 智能模式識別\nif (messageContext.intentHints.isReservation) {\n  learningAnalysis.patterns.push({\n    category: 'restaurant',\n    pattern_type: 'reservation_request',\n    pattern_description: `用戶訂位偏好：${messageContext.messageLength > 50 ? '詳細描述型' : '簡潔型'}，${messageContext.hasEmoji ? '使用表情符號' : '純文字'}`,\n    user_input: messageContext.messageText,\n    bot_response: aiResponse,\n    confidence_score: 0.9,\n    usage_count: 1,\n    success_rate: 0.8,\n    metadata: {\n      messageLength: messageContext.messageLength,\n      hasEmoji: messageContext.hasEmoji,\n      timeOfDay: new Date().getHours()\n    }\n  });\n}\n\nif (messageContext.intentHints.isMenu) {\n  learningAnalysis.patterns.push({\n    category: 'restaurant',\n    pattern_type: 'menu_inquiry',\n    pattern_description: `菜單查詢模式：${messageContext.messageText.includes('推薦') ? '尋求推薦' : '一般查詢'}，偏好${messageContext.messageLength > 30 ? '詳細資訊' : '簡要說明'}`,\n    user_input: messageContext.messageText,\n    bot_response: aiResponse,\n    confidence_score: 0.85,\n    usage_count: 1,\n    success_rate: 0.9,\n    metadata: {\n      seekingRecommendation: messageContext.messageText.includes('推薦'),\n      specificDish: /牛肉麵|火鍋|烤雞/i.test(messageContext.messageText)\n    }\n  });\n}\n\nif (messageContext.intentHints.isDelivery) {\n  learningAnalysis.patterns.push({\n    category: 'restaurant',\n    pattern_type: 'delivery_inquiry',\n    pattern_description: `外送需求分析：${messageContext.messageText.includes('範圍') ? '關心配送範圍' : '基本外送查詢'}`,\n    user_input: messageContext.messageText,\n    bot_response: aiResponse,\n    confidence_score: 0.8,\n    usage_count: 1,\n    success_rate: 0.85\n  });\n}\n\nif (messageContext.intentHints.isHours) {\n  learningAnalysis.patterns.push({\n    category: 'restaurant',\n    pattern_type: 'hours_inquiry',\n    pattern_description: `營業時間查詢：${new Date().getHours() < 11 || new Date().getHours() > 22 ? '非營業時間查詢' : '營業中查詢'}`,\n    user_input: messageContext.messageText,\n    bot_response: aiResponse,\n    confidence_score: 0.75,\n    usage_count: 1,\n    success_rate: 0.95\n  });\n}\n\n// 情感分析（簡化版）\nconst positiveWords = ['好', '棒', '讚', '喜歡', '滿意', '謝謝'];\nconst negativeWords = ['不好', '爛', '差', '不滿', '抱怨', '問題'];\n\nconst sentiment = {\n  positive: positiveWords.some(word => messageContext.messageText.includes(word)),\n  negative: negativeWords.some(word => messageContext.messageText.includes(word)),\n  neutral: true\n};\n\nif (sentiment.positive || sentiment.negative) {\n  learningAnalysis.patterns.push({\n    category: 'restaurant',\n    pattern_type: 'customer_feedback',\n    pattern_description: `客戶回饋：${sentiment.positive ? '正面' : '負面'}情感表達`,\n    user_input: messageContext.messageText,\n    bot_response: aiResponse,\n    confidence_score: 0.7,\n    usage_count: 1,\n    success_rate: sentiment.positive ? 0.9 : 0.6\n  });\n}\n\nreturn {\n  shouldLearn: learningAnalysis.patterns.length > 0,\n  learningData: learningAnalysis.patterns,\n  conversationData: {\n    user_id: messageContext.userId,\n    message_id: messageContext.messageId,\n    user_message: messageContext.messageText,\n    bot_response: aiResponse,\n    message_type: 'text',\n    intent_detected: messageContext.detectedIntents.join(','),\n    response_quality_score: learningAnalysis.metrics.responseQuality,\n    timestamp: messageContext.timestamp\n  },\n  analyticsData: {\n    user_id: messageContext.userId,\n    message_type: 'user_query',\n    content_analysis: {\n      messageLength: messageContext.messageLength,\n      hasEmoji: messageContext.hasEmoji,\n      detectedIntents: messageContext.detectedIntents,\n      sentiment: sentiment,\n      complexity: learningAnalysis.metrics.complexityScore\n    },\n    response_time: Date.now() - new Date(messageContext.timestamp).getTime(),\n    satisfaction_estimate: learningAnalysis.metrics.userSatisfactionHint\n  }\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1120, 240],
+      "id": "learning-analyzer",
+      "name": "🧠 智能學習分析"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "insert",
+        "table": {
+          "__rl": true,
+          "value": "conversation_history",
+          "mode": "list"
+        },
+        "records": "={{ [$json.conversationData] }}"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1320, 140],
+      "id": "save-conversation",
+      "name": "💾 保存對話記錄",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-restaurant-bot",
+          "name": "Supabase Restaurant Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.shouldLearn }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1320, 240],
+      "id": "should-learn-check",
+      "name": "🤔 需要學習嗎？"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "insert",
+        "table": {
+          "__rl": true,
+          "value": "learning_patterns",
+          "mode": "list"
+        },
+        "records": "={{ $json.learningData }}"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1520, 200],
+      "id": "save-learning-patterns",
+      "name": "📚 保存學習模式",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-restaurant-bot",
+          "name": "Supabase Restaurant Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "insert",
+        "table": {
+          "__rl": true,
+          "value": "analytics_data",
+          "mode": "list"
+        },
+        "records": "={{ [$json.analyticsData] }}"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1320, 340],
+      "id": "save-analytics",
+      "name": "📊 保存分析數據",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-restaurant-bot",
+          "name": "Supabase Restaurant Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "upsert",
+        "table": {
+          "__rl": true,
+          "value": "user_preferences",
+          "mode": "list"
+        },
+        "records": [{
+          "user_id": "={{ $node['🧠 智能學習分析'].json.conversationData.user_id }}",
+          "total_interactions": "={{ ($node['👤 獲取用戶偏好'].json?.[0]?.total_interactions || 0) + 1 }}",
+          "last_interaction": "={{ new Date().toISOString() }}",
+          "communication_style": "friendly",
+          "preferred_response_length": "medium"
+        }],
+        "onConflict": "user_id"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1320, 440],
+      "id": "update-user-preferences",
+      "name": "👤 更新用戶偏好",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-restaurant-bot",
+          "name": "Supabase Restaurant Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.line.me/v2/bot/message/reply",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n    \"replyToken\": \"{{ $node['🎯 智能上下文構建'].json.messageContext.replyToken }}\",\n    \"messages\": [\n        {\n            \"type\": \"text\",\n            \"text\": \"{{ $node['🤖 智能AI助手'].json.output.replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"').replace(/\\r?\\n/g, '\\\\n') }}\"\n        }\n    ]\n}",
+        "options": {
+          "timeout": 10000,\n          "retry": {\n            \"enabled\": true,\n            \"maxRetries\": 3\n          }\n        }\n      },\n      \"type\": \"n8n-nodes-base.httpRequest\",\n      \"typeVersion\": 4.2,\n      \"position\": [1120, 440],\n      \"id\": \"line-reply\",\n      \"name\": \"📱 LINE智能回覆\",\n      \"credentials\": {\n        \"httpHeaderAuth\": {\n          \"id\": \"line-bot-restaurant\",\n          \"name\": \"LINE Bot Restaurant\"\n        }\n      }\n    },\n    {\n      \"parameters\": {\n        \"conditions\": {\n          \"options\": {\n            \"caseSensitive\": true,\n            \"leftValue\": \"\",\n            \"typeValidation\": \"strict\"\n          },\n          \"conditions\": [\n            {\n              \"leftValue\": \"={{ $node['📱 LINE智能回覆'].json.statusCode }}\",\n              \"rightValue\": 200,\n              \"operator\": {\n                \"type\": \"number\",\n                \"operation\": \"equals\"\n              }\n            }\n          ]\n        },\n        \"options\": {}\n      },\n      \"type\": \"n8n-nodes-base.if\",\n      \"typeVersion\": 2,\n      \"position\": [1320, 540],\n      \"id\": \"reply-success-check\",\n      \"name\": \"✅ 回覆成功？\"\n    },\n    {\n      \"parameters\": {\n        \"authentication\": \"serviceAccount\",\n        \"operation\": \"insert\",\n        \"table\": {\n          \"__rl\": true,\n          \"value\": \"system_logs\",\n          \"mode\": \"list\"\n        },\n        \"records\": [{\n          \"log_type\": \"reply_success\",\n          \"user_id\": \"={{ $node['🧠 智能學習分析'].json.conversationData.user_id }}\",\n          \"message\": \"LINE回覆發送成功\",\n          \"metadata\": \"={{ JSON.stringify({statusCode: $node['📱 LINE智能回覆'].json.statusCode, timestamp: new Date().toISOString()}) }}\",\n          \"created_at\": \"={{ new Date().toISOString() }}\"\n        }]\n      },\n      \"type\": \"n8n-nodes-base.supabase\",\n      \"typeVersion\": 1,\n      \"position\": [1520, 500],\n      \"id\": \"log-success\",\n      \"name\": \"📝 記錄成功日誌\",\n      \"credentials\": {\n        \"supabaseApi\": {\n          \"id\": \"supabase-restaurant-bot\",\n          \"name\": \"Supabase Restaurant Bot\"\n        }\n      }\n    }\n  ],\n  \"connections\": {\n    \"LINE Webhook接收器\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"🧠 智能訊息解析器\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"🧠 智能訊息解析器\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"📚 獲取對話歷史\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"🎯 獲取學習模式\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"👤 獲取用戶偏好\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"📚 獲取對話歷史\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"🎯 智能上下文構建\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"🎯 獲取學習模式\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"🎯 智能上下文構建\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"👤 獲取用戶偏好\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"🎯 智能上下文構建\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"🎯 智能上下文構建\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"🤖 智能AI助手\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"🤖 智能AI助手\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"🧠 智能學習分析\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"📱 LINE智能回覆\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"🧠 智能學習分析\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"💾 保存對話記錄\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"🤔 需要學習嗎？\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"📊 保存分析數據\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"👤 更新用戶偏好\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"🤔 需要學習嗎？\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"📚 保存學習模式\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"📱 LINE智能回覆\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"✅ 回覆成功？\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"✅ 回覆成功？\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"📝 記錄成功日誌\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"🧠 GPT-4o-Mini模型\": {\n      \"ai_languageModel\": [\n        [\n          {\n            \"node\": \"🤖 智能AI助手\",\n            \"type\": \"ai_languageModel\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"💾 增強記憶系統\": {\n      \"ai_memory\": [\n        [\n          {\n            \"node\": \"🤖 智能AI助手\",\n            \"type\": \"ai_memory\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"📊 Google表單工具\": {\n      \"ai_tool\": [\n        [\n          {\n            \"node\": \"🤖 智能AI助手\",\n            \"type\": \"ai_tool\",\n            \"index\": 0\n          }\n        ]\n      ]\n    }\n  },\n  \"settings\": {\n    \"executionOrder\": \"v1\",\n    \"saveManualExecutions\": true,\n    \"callerPolicy\": \"workflowsFromSameOwner\"\n  },\n  \"staticData\": null,\n  \"meta\": {\n    \"templateCredsSetupCompleted\": false,\n    \"instanceId\": \"self-learning-restaurant-bot\"\n  },\n  \"pinData\": {},\n  \"versionId\": \"optimized-v1\",\n  \"triggerCount\": 1,\n  \"tags\": [\"mcp-optimized\", \"self-learning\", \"restaurant\", \"line-bot\", \"supabase\"]\n}"

@@ -1,0 +1,69 @@
+{
+  "name": "Hello World MCP Example",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "hello-mcp",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      },
+      "id": "mcp-trigger",
+      "name": "MCP Server Trigger",
+      "type": "n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Hello World MCP 範例\nconst request = $input.first().json;\n\n// 記錄收到的請求\nconsole.log('收到 MCP 請求:', request);\n\n// 簡單的 Hello World 響應\nconst response = {\n  success: true,\n  message: 'Hello from MCP + n8n!',\n  timestamp: new Date().toISOString(),\n  receivedData: request\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "hello-world-processor",
+      "name": "Hello World Processor",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseContentType": "application/json"
+        }
+      },
+      "id": "respond-to-mcp",
+      "name": "Respond to MCP",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [640, 300]
+    }
+  ],
+  "connections": {
+    "MCP Server Trigger": {
+      "main": [
+        [
+          {
+            "node": "Hello World Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hello World Processor": {
+      "main": [
+        [
+          {
+            "node": "Respond to MCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "staticData": {},
+  "tags": ["MCP", "教學範例", "Hello World"],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-18T00:00:00.000Z",
+  "versionId": "1.0"
+}

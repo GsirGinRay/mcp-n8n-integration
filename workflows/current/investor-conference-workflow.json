@@ -1,0 +1,256 @@
+{
+  "name": "法說會簡報自動抓取",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "定時觸發器",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "headerAuth",
+        "url": "https://mops.twse.com.tw/mops/web/ajax_t100sb02_1",
+        "options": {
+          "headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://mops.twse.com.tw/mops/web/t100sb02_1.html",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          "timeout": 30000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "encodeURIComponent",
+              "value": "1"
+            },
+            {
+              "name": "step",
+              "value": "1"
+            },
+            {
+              "name": "firstin",
+              "value": "1"
+            },
+            {
+              "name": "TYPEK",
+              "value": "all"
+            }
+          ]
+        }
+      },
+      "id": "fetch-data",
+      "name": "抓取法說會資料",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 處理抓取到的法說會資料\nconst items = [];\n\nfor (const item of $input.all()) {\n  const data = item.json;\n  \n  // 如果資料是 HTML，需要解析\n  if (typeof data === 'string') {\n    // 使用正則表達式解析 HTML 表格\n    const rows = data.match(/<tr[^>]*>.*?<\\/tr>/gs) || [];\n    \n    for (const row of rows) {\n      const cells = row.match(/<td[^>]*>(.*?)<\\/td>/gs) || [];\n      \n      if (cells.length >= 5) {\n        const stockCode = cells[0]?.replace(/<[^>]*>/g, '').trim();\n        const companyName = cells[1]?.replace(/<[^>]*>/g, '').trim();\n        const conferenceDate = cells[2]?.replace(/<[^>]*>/g, '').trim();\n        const quarter = cells[3]?.replace(/<[^>]*>/g, '').trim();\n        \n        // 提取下載連結\n        const linkMatch = cells[4]?.match(/href=[\"'](.*?)[\"']/i);\n        const presentationUrl = linkMatch ? linkMatch[1] : null;\n        \n        if (stockCode && companyName && conferenceDate) {\n          items.push({\n            json: {\n              stock_code: stockCode,\n              company_name: companyName,\n              conference_date: conferenceDate,\n              quarter: quarter,\n              year: new Date(conferenceDate).getFullYear(),\n              presentation_url: presentationUrl,\n              file_name: presentationUrl ? presentationUrl.split('/').pop() : null,\n              conference_type: '法說會',\n              status: 'pending',\n              scraped_at: new Date().toISOString(),\n              published_at: conferenceDate\n            }\n          });\n        }\n      }\n    }\n  } else if (Array.isArray(data)) {\n    // 如果是 JSON 陣列格式\n    for (const record of data) {\n      items.push({\n        json: {\n          stock_code: record.股票代號 || record.stock_code,\n          company_name: record.公司名稱 || record.company_name,\n          conference_date: record.法說會日期 || record.conference_date,\n          quarter: record.財季 || record.quarter,\n          year: record.年度 || new Date(record.法說會日期 || record.conference_date).getFullYear(),\n          presentation_url: record.簡報連結 || record.presentation_url,\n          file_name: record.檔案名稱 || record.file_name,\n          conference_type: '法說會',\n          status: 'pending',\n          scraped_at: new Date().toISOString(),\n          published_at: record.法說會日期 || record.conference_date\n        }\n      });\n    }\n  }\n}\n\nreturn items;"
+      },
+      "id": "process-data",
+      "name": "處理資料",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "select",
+        "table": "investor_conferences",
+        "where": "stock_code = $json.stock_code AND conference_date = $json.conference_date",
+        "options": {}
+      },
+      "id": "check-duplicate",
+      "name": "檢查重複資料",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-new-records",
+      "name": "篩選新記錄",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "insert",
+        "table": "investor_conferences",
+        "options": {}
+      },
+      "id": "insert-supabase",
+      "name": "存入 Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1340, 220]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.presentation_url }}",
+        "options": {
+          "headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://mops.twse.com.tw/"
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-file",
+      "name": "下載簡報檔案 (可選)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1340, 380],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "message": ":white_check_mark: 成功抓取 {{ $json.length }} 筆新的法說會資料",
+        "additionalFields": {
+          "channel": "#投資人會議"
+        }
+      },
+      "id": "notify-success",
+      "name": "成功通知",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [1560, 220]
+    },
+    {
+      "parameters": {
+        "message": ":x: 法說會資料抓取失敗: {{ $json.error?.message }}",
+        "additionalFields": {
+          "channel": "#錯誤通知"
+        }
+      },
+      "id": "notify-error",
+      "name": "錯誤通知",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [1340, 480]
+    }
+  ],
+  "connections": {
+    "定時觸發器": {
+      "main": [
+        [
+          {
+            "node": "抓取法說會資料",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "抓取法說會資料": {
+      "main": [
+        [
+          {
+            "node": "處理資料",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "處理資料": {
+      "main": [
+        [
+          {
+            "node": "檢查重複資料",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "檢查重複資料": {
+      "main": [
+        [
+          {
+            "node": "篩選新記錄",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "篩選新記錄": {
+      "main": [
+        [
+          {
+            "node": "存入 Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "存入 Supabase": {
+      "main": [
+        [
+          {
+            "node": "成功通知",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "錯誤通知"
+  },
+  "staticData": null,
+  "tags": ["投資人會議", "自動化", "資料抓取"],
+  "triggerCount": 1,
+  "updatedAt": "2024-12-01T10:00:00.000Z",
+  "versionId": "1"
+}

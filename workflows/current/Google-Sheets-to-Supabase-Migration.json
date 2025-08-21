@@ -1,0 +1,161 @@
+{
+  "name": "Google Sheets 知識庫遷移到 Supabase",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [120, 300],
+      "id": "schedule-trigger",
+      "name": "每日同步觸發器"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "readRows",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1flNYeSHD6AOgx0Xvme7L8nngXvJ1vyjOfvfhqvD8tuM/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list"
+        },
+        "options": {
+          "range": "A:Z"
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [320, 300],
+      "id": "read-google-sheets",
+      "name": "讀取Google Sheets"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Google Sheets 數據轉換為 Supabase 知識庫格式\nconst items = $input.all();\nconst transformedData = [];\n\nfor (const item of items) {\n  const row = item.json;\n  \n  // 跳過標題行或空行\n  if (!row.question || row.question === 'Question' || row.question.trim() === '') {\n    continue;\n  }\n  \n  // 轉換為知識庫格式\n  const knowledgeEntry = {\n    category: row.category || 'general',\n    subcategory: row.subcategory || null,\n    question: row.question.trim(),\n    answer: row.answer ? row.answer.trim() : '',\n    keywords: row.keywords ? row.keywords.split(',').map(k => k.trim()).filter(k => k) : [],\n    intent_type: row.intent_type || 'inquiry',\n    confidence_threshold: parseFloat(row.confidence_threshold) || 0.8,\n    content_type: row.content_type || 'text',\n    media_url: row.media_url || null,\n    external_link: row.external_link || null,\n    language: row.language || 'zh-TW',\n    is_active: row.is_active !== 'false' && row.is_active !== '0',\n    source: 'google-sheets',\n    source_reference: `Row ${item.pairedItem?.item || 'unknown'}`,\n    created_by: 'migration-tool',\n    \n    // 如果有額外欄位\n    usage_count: parseInt(row.usage_count) || 0,\n    success_rate: parseFloat(row.success_rate) || 1.0\n  };\n  \n  transformedData.push(knowledgeEntry);\n}\n\nconsole.log(`轉換了 ${transformedData.length} 筆知識庫資料`);\nreturn transformedData.map(data => ({ json: data }));"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [520, 300],
+      "id": "transform-data",
+      "name": "數據轉換器"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "table": "knowledge_base",
+        "records": "={{ $json }}",
+        "onConflict": "question"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [720, 300],
+      "id": "upsert-knowledge",
+      "name": "更新知識庫"
+    },
+    {
+      "parameters": {
+        "functionCode": "// 統計遷移結果\nconst items = $input.all();\nconst summary = {\n  total_processed: items.length,\n  successful_inserts: items.filter(item => item.json?.status === 'created').length,\n  successful_updates: items.filter(item => item.json?.status === 'updated').length,\n  errors: items.filter(item => item.json?.error).length,\n  timestamp: new Date().toISOString()\n};\n\nconsole.log('知識庫遷移完成:', summary);\nreturn { json: summary };"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [920, 300],
+      "id": "migration-summary",
+      "name": "遷移統計"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "system_analytics",
+        "records": [{
+          "metric_type": "knowledge-migration",
+          "metric_name": "google-sheets-sync",
+          "metric_value": "={{ $json.total_processed }}",
+          "additional_data": "={{ $json }}"
+        }]
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1120, 300],
+      "id": "log-migration",
+      "name": "記錄遷移日誌"
+    }
+  ],
+  "connections": {
+    "每日同步觸發器": {
+      "main": [
+        [
+          {
+            "node": "讀取Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "讀取Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "數據轉換器",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "數據轉換器": {
+      "main": [
+        [
+          {
+            "node": "更新知識庫",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "更新知識庫": {
+      "main": [
+        [
+          {
+            "node": "遷移統計",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "遷移統計": {
+      "main": [
+        [
+          {
+            "node": "記錄遷移日誌",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {},
+  "pinData": {},
+  "triggerCount": 1,
+  "tags": ["migration", "knowledge-base", "supabase"]
+}

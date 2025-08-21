@@ -1,0 +1,198 @@
+{
+  "name": "Google雲端硬碟數據庫同步到Supabase",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/10 * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [120, 300],
+      "id": "schedule-trigger",
+      "name": "定時同步觸發器",
+      "notes": "每10分鐘檢查一次新文件"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "list",
+        "filters": {
+          "name": "*.csv,*.xlsx,*.json",
+          "parents": ["YOUR_FOLDER_ID"]
+        },
+        "options": {
+          "fields": "files(id,name,mimeType,modifiedTime,size,parents)"
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [320, 300],
+      "id": "list-drive-files",
+      "name": "掃描雲端文件"
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "table": "file_sync_log",
+        "where": "sync_status = 'completed'",
+        "orderBy": "last_sync_time DESC"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [320, 500],
+      "id": "get-sync-log",
+      "name": "獲取同步記錄"
+    },
+    {
+      "parameters": {
+        "functionCode": "// 識別新文件和變更文件\nconst driveFiles = $node['掃描雲端文件'].json.files || [];\nconst syncLog = $node['獲取同步記錄'].json || [];\n\n// 建立已同步文件的映射\nconst syncedFiles = new Map();\nsyncLog.forEach(log => {\n  syncedFiles.set(log.file_id, {\n    lastModified: new Date(log.file_modified_time),\n    syncTime: new Date(log.last_sync_time)\n  });\n});\n\nconst filesToProcess = [];\n\ndriveFiles.forEach(file => {\n  const fileModifiedTime = new Date(file.modifiedTime);\n  const syncInfo = syncedFiles.get(file.id);\n  \n  let shouldProcess = false;\n  let processReason = '';\n  \n  if (!syncInfo) {\n    // 新文件\n    shouldProcess = true;\n    processReason = 'new_file';\n  } else if (fileModifiedTime > syncInfo.lastModified) {\n    // 文件已更新\n    shouldProcess = true;\n    processReason = 'file_updated';\n  }\n  \n  if (shouldProcess) {\n    filesToProcess.push({\n      id: file.id,\n      name: file.name,\n      mimeType: file.mimeType,\n      modifiedTime: file.modifiedTime,\n      size: file.size,\n      processReason,\n      estimatedRecords: Math.ceil((file.size || 1000) / 100) // 估算記錄數\n    });\n  }\n});\n\nconsole.log(`發現 ${filesToProcess.length} 個需要處理的文件`);\nreturn filesToProcess.map(file => ({ json: file }));"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [520, 300],
+      "id": "identify-new-files",
+      "name": "識別新/變更文件"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.name }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 300],
+      "id": "has-files-to-process",
+      "name": "有文件需要處理？"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "download",
+        "fileId": "={{ $json.id }}"
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [920, 200],
+      "id": "download-file",
+      "name": "下載文件"
+    },
+    {
+      "parameters": {
+        "functionCode": "// 智能文件解析器 - 支援多種格式\nconst fileInfo = $node['識別新/變更文件'].json;\nconst fileData = $input.first().binary;\n\nlet parsedData = [];\nlet tableName = '';\nlet errorMessage = '';\n\ntry {\n  // 根據文件類型解析\n  if (fileInfo.mimeType.includes('text/csv') || fileInfo.name.endsWith('.csv')) {\n    // CSV文件解析\n    const csvContent = Buffer.from(fileData.data, 'base64').toString('utf-8');\n    const lines = csvContent.split('\\n').filter(line => line.trim());\n    \n    if (lines.length > 0) {\n      const headers = lines[0].split(',').map(h => h.trim().replace(/\"/g, ''));\n      \n      for (let i = 1; i < lines.length; i++) {\n        const values = lines[i].split(',').map(v => v.trim().replace(/\"/g, ''));\n        const record = {};\n        \n        headers.forEach((header, index) => {\n          record[header] = values[index] || null;\n        });\n        \n        parsedData.push(record);\n      }\n    }\n    \n  } else if (fileInfo.mimeType.includes('application/json') || fileInfo.name.endsWith('.json')) {\n    // JSON文件解析\n    const jsonContent = Buffer.from(fileData.data, 'base64').toString('utf-8');\n    const jsonData = JSON.parse(jsonContent);\n    \n    if (Array.isArray(jsonData)) {\n      parsedData = jsonData;\n    } else if (typeof jsonData === 'object') {\n      parsedData = [jsonData];\n    }\n    \n  } else if (fileInfo.mimeType.includes('spreadsheet') || fileInfo.name.endsWith('.xlsx')) {\n    // Excel文件處理 (需要額外處理)\n    errorMessage = 'Excel文件需要額外的解析步驟';\n  }\n  \n  // 根據文件名推斷表名\n  tableName = fileInfo.name\n    .replace(/\\.[^/.]+$/, '') // 移除副檔名\n    .toLowerCase()\n    .replace(/[^a-z0-9]/g, '_') // 替換特殊字符\n    .replace(/_+/g, '_') // 合併多個底線\n    .replace(/^_|_$/g, ''); // 移除開頭結尾的底線\n  \n  // 如果表名為空，使用預設名稱\n  if (!tableName) {\n    tableName = 'imported_data_' + Date.now();\n  }\n  \n} catch (error) {\n  errorMessage = error.message;\n}\n\nreturn {\n  success: parsedData.length > 0,\n  tableName,\n  recordCount: parsedData.length,\n  sampleData: parsedData.slice(0, 3), // 前3筆作為樣本\n  allData: parsedData,\n  fileInfo,\n  errorMessage,\n  columns: parsedData.length > 0 ? Object.keys(parsedData[0]) : []\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [920, 400],
+      "id": "parse-file-data",
+      "name": "智能文件解析"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ $json.recordCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 400],
+      "id": "parsing-successful",
+      "name": "解析成功？"
+    },
+    {
+      "parameters": {
+        "functionCode": "// 動態表結構創建器\nconst { tableName, allData, columns, fileInfo } = $json;\n\nif (!allData || allData.length === 0) {\n  throw new Error('沒有數據可以創建表結構');\n}\n\n// 分析列類型\nconst columnDefinitions = [];\nconst sampleSize = Math.min(100, allData.length); // 取樣100筆分析類型\n\ncolumns.forEach(column => {\n  const cleanColumnName = column\n    .toLowerCase()\n    .replace(/[^a-z0-9]/g, '_')\n    .replace(/_+/g, '_')\n    .replace(/^_|_$/g, '');\n  \n  // 分析數據類型\n  let isNumeric = true;\n  let isBoolean = true;\n  let isDate = true;\n  let maxLength = 0;\n  \n  for (let i = 0; i < sampleSize; i++) {\n    const value = allData[i][column];\n    \n    if (value === null || value === undefined || value === '') continue;\n    \n    const strValue = String(value).trim();\n    maxLength = Math.max(maxLength, strValue.length);\n    \n    // 檢查是否為數字\n    if (isNumeric && isNaN(parseFloat(strValue))) {\n      isNumeric = false;\n    }\n    \n    // 檢查是否為布林值\n    if (isBoolean && !['true', 'false', '1', '0', 'yes', 'no'].includes(strValue.toLowerCase())) {\n      isBoolean = false;\n    }\n    \n    // 檢查是否為日期\n    if (isDate && isNaN(Date.parse(strValue))) {\n      isDate = false;\n    }\n  }\n  \n  // 決定數據類型\n  let dataType = 'TEXT';\n  if (isBoolean && maxLength <= 10) {\n    dataType = 'BOOLEAN';\n  } else if (isNumeric) {\n    dataType = 'DECIMAL';\n  } else if (isDate) {\n    dataType = 'TIMESTAMP WITH TIME ZONE';\n  } else if (maxLength <= 255) {\n    dataType = `VARCHAR(${Math.max(255, maxLength + 50)})`;\n  }\n  \n  columnDefinitions.push({\n    originalName: column,\n    name: cleanColumnName || 'column_' + columnDefinitions.length,\n    type: dataType,\n    maxLength\n  });\n});\n\n// 生成創建表的SQL\nconst createTableSQL = `\nCREATE TABLE IF NOT EXISTS ${tableName} (\n  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,\n  ${columnDefinitions.map(col => `${col.name} ${col.type}`).join(',\\n  ')},\n  \n  -- 元數據欄位\n  source_file_id VARCHAR(255),\n  source_file_name VARCHAR(500),\n  import_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  import_batch_id VARCHAR(100),\n  \n  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()\n);\n\n-- 創建索引\nCREATE INDEX IF NOT EXISTS idx_${tableName}_source ON ${tableName}(source_file_id);\nCREATE INDEX IF NOT EXISTS idx_${tableName}_import ON ${tableName}(import_timestamp);\n`;\n\n// 準備數據插入\nconst batchId = `batch_${Date.now()}`;\nconst insertData = allData.map(record => {\n  const processedRecord = {\n    source_file_id: fileInfo.id,\n    source_file_name: fileInfo.name,\n    import_batch_id: batchId\n  };\n  \n  columnDefinitions.forEach(col => {\n    let value = record[col.originalName];\n    \n    // 數據類型轉換\n    if (value === null || value === undefined || value === '') {\n      processedRecord[col.name] = null;\n    } else if (col.type === 'BOOLEAN') {\n      processedRecord[col.name] = ['true', '1', 'yes'].includes(String(value).toLowerCase());\n    } else if (col.type === 'DECIMAL') {\n      processedRecord[col.name] = parseFloat(value) || 0;\n    } else if (col.type.includes('TIMESTAMP')) {\n      processedRecord[col.name] = new Date(value).toISOString();\n    } else {\n      processedRecord[col.name] = String(value).trim();\n    }\n  });\n  \n  return processedRecord;\n});\n\nreturn {\n  tableName,\n  createTableSQL,\n  insertData,\n  batchId,\n  columnDefinitions,\n  recordCount: insertData.length,\n  fileInfo\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1320, 350],
+      "id": "create-table-structure",
+      "name": "動態表結構創建"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.createTableSQL }}"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1520, 300],
+      "id": "create-table",
+      "name": "創建Supabase表"
+    },
+    {
+      "parameters": {
+        "batchSize": 100,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1520, 400],
+      "id": "split-data-batches",
+      "name": "分批處理數據"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "={{ $node['動態表結構創建'].json.tableName }}",
+        "records": "={{ $json.insertData.slice($node['分批處理數據'].context.currentRunIndex * 100, ($node['分批處理數據'].context.currentRunIndex + 1) * 100) }}"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1720, 400],
+      "id": "insert-batch-data",
+      "name": "批量插入數據"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "table": "file_sync_log",
+        "records": [{\n          \"file_id\": \"={{ $node['動態表結構創建'].json.fileInfo.id }}\",\n          \"file_name\": \"={{ $node['動態表結構創建'].json.fileInfo.name }}\",\n          \"file_modified_time\": \"={{ $node['動態表結構創建'].json.fileInfo.modifiedTime }}\",\n          \"target_table_name\": \"={{ $node['動態表結構創建'].json.tableName }}\",\n          \"records_imported\": \"={{ $node['動態表結構創建'].json.recordCount }}\",\n          \"import_batch_id\": \"={{ $node['動態表結構創建'].json.batchId }}\",\n          \"sync_status\": \"completed\",\n          \"last_sync_time\": \"={{ new Date().toISOString() }}\",\n          \"column_definitions\": \"={{ JSON.stringify($node['動態表結構創建'].json.columnDefinitions) }}\",\n          \"file_size_bytes\": \"={{ $node['動態表結構創建'].json.fileInfo.size }}\"\n        }],\n        \"onConflict\": \"file_id\"\n      },\n      \"type\": \"n8n-nodes-base.supabase\",\n      \"typeVersion\": 1,\n      \"position\": [1920, 400],\n      \"id\": \"update-sync-log\",\n      \"name\": \"更新同步記錄\"\n    },\n    {\n      \"parameters\": {\n        \"operation\": \"insert\",\n        \"table\": \"system_analytics\",\n        \"records\": [{\n          \"metric_type\": \"data-import\",\n          \"metric_name\": \"google-drive-sync\",\n          \"metric_value\": \"={{ $node['動態表結構創建'].json.recordCount }}\",\n          \"additional_data\": {\n            \"file_name\": \"={{ $node['動態表結構創建'].json.fileInfo.name }}\",\n            \"table_name\": \"={{ $node['動態表結構創建'].json.tableName }}\",\n            \"batch_id\": \"={{ $node['動態表結構創建'].json.batchId }}\",\n            \"file_size\": \"={{ $node['動態表結構創建'].json.fileInfo.size }}\",\n            \"processing_time_ms\": \"={{ Date.now() - new Date($node['下載文件'].context.startTime).getTime() }}\"\n          }\n        }]\n      },\n      \"type\": \"n8n-nodes-base.supabase\",\n      \"typeVersion\": 1,\n      \"position\": [1920, 300],\n      \"id\": \"log-import-stats\",\n      \"name\": \"記錄導入統計\"\n    },\n    {\n      \"parameters\": {\n        \"functionCode\": \"// 導入結果統計\\nconst tableInfo = $node['動態表結構創建'].json;\\nconst syncResults = $input.all();\\n\\nconst summary = {\\n  success: true,\\n  fileName: tableInfo.fileInfo.name,\\n  tableName: tableInfo.tableName,\\n  recordsProcessed: tableInfo.recordCount,\\n  batchesCompleted: syncResults.length,\\n  importTime: new Date().toISOString(),\\n  columnCount: tableInfo.columnDefinitions.length,\\n  fileSize: tableInfo.fileInfo.size,\\n  batchId: tableInfo.batchId\\n};\\n\\nconsole.log('數據導入完成:', summary);\\nreturn { json: summary };\"\n      },\n      \"type\": \"n8n-nodes-base.function\",\n      \"typeVersion\": 1,\n      \"position\": [2120, 400],\n      \"id\": \"import-summary\",\n      \"name\": \"導入結果統計\"\n    },\n    {\n      \"parameters\": {\n        \"operation\": \"insert\",\n        \"table\": \"file_sync_log\",\n        \"records\": [{\n          \"file_id\": \"error_\" + Date.now(),\n          \"file_name\": \"={{ $node['智能文件解析'].json.fileInfo?.name || 'unknown' }}\",\n          \"sync_status\": \"failed\",\n          \"error_message\": \"={{ $node['智能文件解析'].json.errorMessage }}\",\n          \"last_sync_time\": \"={{ new Date().toISOString() }}\"\n        }]\n      },\n      \"type\": \"n8n-nodes-base.supabase\",\n      \"typeVersion\": 1,\n      \"position\": [1320, 600],\n      \"id\": \"log-parsing-error\",\n      \"name\": \"記錄解析錯誤\"\n    },\n    {\n      \"parameters\": {\n        \"method\": \"POST\",\n        \"url\": \"https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK\",\n        \"sendBody\": true,\n        \"specifyBody\": \"json\",\n        \"jsonBody\": \"={\\n    \\\"text\\\": \\\"🎉 Google Drive 數據同步完成!\\\",\\n    \\\"attachments\\\": [\\n        {\\n            \\\"color\\\": \\\"good\\\",\\n            \\\"fields\\\": [\\n                {\\n                    \\\"title\\\": \\\"文件名稱\\\",\\n                    \\\"value\\\": \\\"{{ $json.fileName }}\\\",\\n                    \\\"short\\\": true\\n                },\\n                {\\n                    \\\"title\\\": \\\"目標表名\\\",\\n                    \\\"value\\\": \\\"{{ $json.tableName }}\\\",\\n                    \\\"short\\\": true\\n                },\\n                {\\n                    \\\"title\\\": \\\"導入記錄數\\\",\\n                    \\\"value\\\": \\\"{{ $json.recordsProcessed }}\\\",\\n                    \\\"short\\\": true\\n                },\\n                {\\n                    \\\"title\\\": \\\"批次ID\\\",\\n                    \\\"value\\\": \\\"{{ $json.batchId }}\\\",\\n                    \\\"short\\\": true\\n                }\\n            ]\\n        }\\n    ]\\n}\",\n        \"options\": {}\n      },\n      \"type\": \"n8n-nodes-base.httpRequest\",\n      \"typeVersion\": 4.2,\n      \"position\": [2320, 400],\n      \"id\": \"notify-completion\",\n      \"name\": \"通知同步完成\"\n    }\n  ],\n  \"connections\": {\n    \"定時同步觸發器\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"掃描雲端文件\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"獲取同步記錄\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"掃描雲端文件\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"識別新/變更文件\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"獲取同步記錄\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"識別新/變更文件\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"識別新/變更文件\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"有文件需要處理？\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"有文件需要處理？\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"下載文件\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"下載文件\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"智能文件解析\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"智能文件解析\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"解析成功？\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"解析成功？\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"動態表結構創建\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ],\n        [\n          {\n            \"node\": \"記錄解析錯誤\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"動態表結構創建\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"創建Supabase表\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"分批處理數據\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"分批處理數據\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"批量插入數據\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"批量插入數據\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"更新同步記錄\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"記錄導入統計\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"更新同步記錄\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"導入結果統計\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"導入結果統計\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"通知同步完成\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    }\n  },\n  \"settings\": {\n    \"executionOrder\": \"v1\"\n  },\n  \"staticData\": null,\n  \"meta\": {},\n  \"pinData\": {},\n  \"triggerCount\": 1,\n  \"tags\": [\"google-drive\", \"supabase\", \"data-sync\", \"automation\"]\n}"

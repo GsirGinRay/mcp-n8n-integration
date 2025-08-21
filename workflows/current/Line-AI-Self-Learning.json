@@ -1,0 +1,413 @@
+{
+  "name": "Line官方機器人-自學習版(Supabase)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "line-ai",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 200],
+      "id": "webhook-input",
+      "name": "LINE Webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "// 解析 LINE 訊息並準備數據\nconst events = $input.first().json.body.events;\nif (!events || events.length === 0) {\n  return [];\n}\n\nconst event = events[0];\nconst messageText = event.message?.text || '';\nconst userId = event.source?.userId || 'unknown';\nconst timestamp = new Date(event.timestamp).toISOString();\nconst messageId = event.message?.id || Date.now().toString();\nconst replyToken = event.replyToken;\n\nreturn {\n  messageText,\n  userId,\n  timestamp,\n  messageId,\n  replyToken,\n  conversationId: userId + '_' + new Date().toDateString()\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [200, 200],
+      "id": "parse-message",
+      "name": "解析訊息"
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "table": "conversation_history",
+        "where": "user_id = '{{ $json.userId }}' AND DATE(created_at) = CURRENT_DATE",
+        "orderBy": "created_at",
+        "limit": 10
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [400, 100],
+      "id": "get-conversation-history",
+      "name": "獲取對話歷史",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-creds",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "table": "learning_patterns",
+        "where": "category = 'restaurant' AND confidence_score > 0.7",
+        "orderBy": "confidence_score DESC",
+        "limit": 20
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [400, 300],
+      "id": "get-learning-patterns",
+      "name": "獲取學習模式",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-creds",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// 構建增強的系統提示詞，包含學習到的模式\nconst conversationHistory = $node['獲取對話歷史'].json || [];\nconst learningPatterns = $node['獲取學習模式'].json || [];\nconst currentMessage = $node['解析訊息'].json;\n\n// 基礎系統提示\nlet systemPrompt = `你是一個專業、親切且高效率的客服助理，服務於「小明的餐廳」。\n你具備自學習能力，會從過往對話中學習並改善回應品質。\n\n【餐廳資訊】\n- 店名：小明的餐廳\n- 營業時間：週一至週日 11:00 - 22:00\n- 地址：台北市中山區中山路 123 號\n- 電話：02-1234-5678\n- 提供服務：內用、外帶、外送（外送範圍 5 公里內）\n- 外送平台合作：Uber Eats、Foodpanda\n- 支付方式：現金、信用卡、行動支付（Line Pay、Apple Pay）\n\n【學習到的客戶偏好】\\n`;\n\n// 添加學習模式\nlearningPatterns.forEach(pattern => {\n  systemPrompt += `- ${pattern.pattern_description} (信心度: ${pattern.confidence_score})\\n`;\n});\n\nsystemPrompt += `\n【近期對話摘要】\\n`;\n\n// 添加對話歷史摘要\nconversationHistory.slice(-5).forEach(conv => {\n  const time = new Date(conv.created_at).toLocaleTimeString();\n  systemPrompt += `${time}: 用戶問\"${conv.user_message}\" 回覆\"${conv.bot_response?.substring(0, 50)}...\"\\n`;\n});\n\nsystemPrompt += `\n【回覆指導原則】\n1. 參考學習到的模式提供個人化回應\n2. 考慮用戶的歷史偏好\n3. 保持親切自然的對話風格\n4. 針對常見問題提供更精準的回答\n5. 如果遇到新問題，詳細記錄以便學習\n\n請基於以上資訊，為用戶訊息\"${currentMessage.messageText}\"提供最佳回應。`;\n\nreturn {\n  systemPrompt,\n  userMessage: currentMessage.messageText,\n  conversationContext: {\n    userId: currentMessage.userId,\n    messageId: currentMessage.messageId,\n    replyToken: currentMessage.replyToken,\n    timestamp: currentMessage.timestamp\n  }\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [600, 200],
+      "id": "build-context",
+      "name": "構建智能上下文"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userMessage }}",
+        "options": {
+          "systemMessage": "={{ $json.systemPrompt }}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [800, 200],
+      "id": "ai-agent",
+      "name": "智能AI助手"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 500
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [800, 400],
+      "id": "openai-model",
+      "name": "OpenAI GPT-4o-mini",
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $node['構建智能上下文'].json.conversationContext.userId }}",
+        "contextWindowLength": 20
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [800, 500],
+      "id": "enhanced-memory",
+      "name": "增強記憶系統"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "conversation_history",
+        "records": [
+          {
+            "user_id": "={{ $node['構建智能上下文'].json.conversationContext.userId }}",
+            "message_id": "={{ $node['構建智能上下文'].json.conversationContext.messageId }}",
+            "user_message": "={{ $node['構建智能上下文'].json.userMessage }}",
+            "bot_response": "={{ $json.output }}",
+            "timestamp": "={{ $node['構建智能上下文'].json.conversationContext.timestamp }}",
+            "created_at": "={{ new Date().toISOString() }}"
+          }
+        ]
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1000, 100],
+      "id": "save-conversation",
+      "name": "保存對話記錄",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-creds",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// 分析對話以提取學習模式\nconst userMessage = $node['構建智能上下文'].json.userMessage;\nconst botResponse = $json.output;\nconst userId = $node['構建智能上下文'].json.conversationContext.userId;\n\n// 定義學習模式分析規則\nconst patterns = [];\n\n// 分析訂位模式\nif (userMessage.includes('訂位') || userMessage.includes('預約')) {\n  patterns.push({\n    category: 'restaurant',\n    pattern_type: 'reservation',\n    pattern_description: `用戶偏好的訂位時間模式`,\n    user_input: userMessage,\n    bot_response: botResponse,\n    confidence_score: 0.8,\n    created_at: new Date().toISOString()\n  });\n}\n\n// 分析菜單詢問模式\nif (userMessage.includes('菜單') || userMessage.includes('餐點') || userMessage.includes('推薦')) {\n  patterns.push({\n    category: 'restaurant', \n    pattern_type: 'menu_inquiry',\n    pattern_description: `用戶對${userMessage.includes('推薦') ? '推薦餐點' : '菜單資訊'}的偏好`,\n    user_input: userMessage,\n    bot_response: botResponse,\n    confidence_score: 0.9,\n    created_at: new Date().toISOString()\n  });\n}\n\n// 分析外送模式\nif (userMessage.includes('外送') || userMessage.includes('送餐') || userMessage.includes('配送')) {\n  patterns.push({\n    category: 'restaurant',\n    pattern_type: 'delivery',\n    pattern_description: `用戶的外送需求偏好`,\n    user_input: userMessage,\n    bot_response: botResponse,\n    confidence_score: 0.85,\n    created_at: new Date().toISOString()\n  });\n}\n\n// 分析營業時間詢問\nif (userMessage.includes('營業') || userMessage.includes('時間') || userMessage.includes('開店')) {\n  patterns.push({\n    category: 'restaurant',\n    pattern_type: 'hours_inquiry',\n    pattern_description: `用戶關心的營業時間相關問題`,\n    user_input: userMessage,\n    bot_response: botResponse,\n    confidence_score: 0.75,\n    created_at: new Date().toISOString()\n  });\n}\n\nreturn {\n  patterns,\n  userMessage,\n  botResponse,\n  userId,\n  shouldLearn: patterns.length > 0\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1000, 300],
+      "id": "analyze-learning",
+      "name": "分析學習模式"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.shouldLearn }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 300],
+      "id": "should-learn-check",
+      "name": "需要學習嗎？"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "learning_patterns",
+        "records": "={{ $json.patterns }}"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1400, 250],
+      "id": "save-learning-patterns",
+      "name": "保存學習模式",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-creds", 
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.line.me/v2/bot/message/reply",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n    \"replyToken\": \"{{ $node['構建智能上下文'].json.conversationContext.replyToken }}\",\n    \"messages\": [\n        {\n            \"type\": \"text\",\n            \"text\": \"{{ $node['智能AI助手'].json.output.replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"').replace(/\\r?\\n/g, '\\\\n') }}\"\n        }\n    ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 500],
+      "id": "line-reply",
+      "name": "LINE智能回覆",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "line-bot-creds",
+          "name": "LINE Bot Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "analytics_data",
+        "records": [
+          {
+            "user_id": "={{ $node['構建智能上下文'].json.conversationContext.userId }}",
+            "message_type": "user_query",
+            "content_analysis": "={{ JSON.stringify({messageLength: $node['構建智能上下文'].json.userMessage.length, hasKeywords: $node['分析學習模式'].json.patterns.length > 0, patterns: $node['分析學習模式'].json.patterns.map(p => p.pattern_type)}) }}",
+            "response_time": "={{ Date.now() - new Date($node['構建智能上下文'].json.conversationContext.timestamp).getTime() }}",
+            "created_at": "={{ new Date().toISOString() }}"
+          }
+        ]
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1200, 500],
+      "id": "save-analytics",
+      "name": "保存分析數據",
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-creds",
+          "name": "Supabase Credentials"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "LINE Webhook": {
+      "main": [
+        [
+          {
+            "node": "解析訊息",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析訊息": {
+      "main": [
+        [
+          {
+            "node": "獲取對話歷史",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "獲取學習模式",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "獲取對話歷史": {
+      "main": [
+        [
+          {
+            "node": "構建智能上下文",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "獲取學習模式": {
+      "main": [
+        [
+          {
+            "node": "構建智能上下文",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "構建智能上下文": {
+      "main": [
+        [
+          {
+            "node": "智能AI助手",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "智能AI助手": {
+      "main": [
+        [
+          {
+            "node": "保存對話記錄",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "分析學習模式",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "LINE智能回覆",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "分析學習模式": {
+      "main": [
+        [
+          {
+            "node": "需要學習嗎？",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "保存分析數據",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "需要學習嗎？": {
+      "main": [
+        [
+          {
+            "node": "保存學習模式",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LINE智能回覆": {
+      "main": [
+        [
+          {
+            "node": "保存分析數據",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "openai-model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "智能AI助手",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "enhanced-memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "智能AI助手",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {},
+  "triggerCount": 1,
+  "tags": ["self-learning", "ai", "line-bot", "supabase"]
+}

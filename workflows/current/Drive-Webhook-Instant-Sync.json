@@ -1,0 +1,137 @@
+{
+  "name": "Google Drive Webhook 即時同步",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "drive-sync-webhook",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 300],
+      "id": "drive-webhook",
+      "name": "Drive Webhook",
+      "webhookId": "drive-sync-webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Google Drive Webhook 解析器\nconst webhookData = $input.first().json;\n\n// 解析 Google Drive 推送通知\nlet driveNotification = {};\n\ntry {\n  // Google Drive API 推送通知格式\n  if (webhookData.message && webhookData.message.data) {\n    const decodedData = Buffer.from(webhookData.message.data, 'base64').toString();\n    driveNotification = JSON.parse(decodedData);\n  } else if (webhookData.kind === 'drive#channel') {\n    // 直接的 Drive API 通知\n    driveNotification = webhookData;\n  } else {\n    // 自定義觸發格式\n    driveNotification = {\n      fileId: webhookData.fileId || webhookData.id,\n      fileName: webhookData.fileName || webhookData.name,\n      changeType: webhookData.changeType || 'file_updated',\n      mimeType: webhookData.mimeType,\n      modifiedTime: webhookData.modifiedTime || new Date().toISOString()\n    };\n  }\n\n  // 標準化通知格式\n  const notification = {\n    fileId: driveNotification.fileId || driveNotification.id,\n    fileName: driveNotification.fileName || driveNotification.name,\n    changeType: driveNotification.changeType || 'unknown',\n    mimeType: driveNotification.mimeType,\n    modifiedTime: driveNotification.modifiedTime || new Date().toISOString(),\n    resourceUri: driveNotification.resourceUri,\n    resourceState: driveNotification.resourceState || 'updated',\n    \n    // 檢查是否為支援的文件類型\n    isSupported: /\\.(csv|xlsx|xls|json)$/i.test(driveNotification.fileName || '') ||\n                ['text/csv', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/json'].includes(driveNotification.mimeType),\n    \n    // 元數據\n    receivedAt: new Date().toISOString(),\n    webhookSource: 'google_drive'\n  };\n\n  console.log('收到 Drive 通知:', notification);\n  return notification;\n  \n} catch (error) {\n  console.error('解析 Webhook 失敗:', error);\n  return {\n    error: true,\n    errorMessage: error.message,\n    rawData: webhookData\n  };\n}"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [320, 300],
+      "id": "parse-webhook",
+      "name": "解析Webhook通知"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isSupported }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ $json.resourceState }}",
+              "rightValue": "updated",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [520, 300],
+      "id": "is-processable",
+      "name": "可處理的文件？"
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "table": "file_sync_log",
+        "where": "file_id = '{{ $json.fileId }}'",
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [720, 200],
+      "id": "check-sync-log",
+      "name": "檢查同步記錄"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "get",
+        "fileId": "={{ $json.fileId }}",
+        "options": {
+          "fields": "id,name,mimeType,size,modifiedTime,parents,webViewLink"
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [720, 400],
+      "id": "get-file-info",
+      "name": "獲取文件詳情"
+    },
+    {
+      "parameters": {
+        "functionCode": "// 判斷是否需要同步\nconst notification = $node['解析Webhook通知'].json;\nconst syncLog = $node['檢查同步記錄'].json?.[0];\nconst fileInfo = $node['獲取文件詳情'].json;\n\nlet shouldSync = false;\nlet syncReason = '';\nlet priority = 'normal';\n\n// 檢查文件是否存在\nif (!fileInfo || fileInfo.error) {\n  return {\n    shouldSync: false,\n    syncReason: 'file_not_found_or_error',\n    fileInfo: notification\n  };\n}\n\nconst fileModifiedTime = new Date(fileInfo.modifiedTime);\nconst notificationTime = new Date(notification.receivedAt);\n\nif (!syncLog) {\n  // 新文件\n  shouldSync = true;\n  syncReason = 'new_file';\n  priority = 'high';\n} else {\n  const lastSyncTime = new Date(syncLog.file_modified_time);\n  \n  if (fileModifiedTime > lastSyncTime) {\n    // 文件已更新\n    shouldSync = true;\n    syncReason = 'file_updated';\n    \n    // 計算更新頻率來決定優先級\n    const timeSinceLastSync = notificationTime - new Date(syncLog.last_sync_time);\n    if (timeSinceLastSync < 5 * 60 * 1000) { // 5分鐘內\n      priority = 'high'; // 頻繁更新，高優先級\n    }\n  } else if (syncLog.sync_status === 'failed' && syncLog.sync_attempts < 3) {\n    // 之前同步失敗，重試\n    shouldSync = true;\n    syncReason = 'retry_failed';\n    priority = 'low';\n  }\n}\n\n// 文件大小檢查\nconst fileSizeMB = (fileInfo.size || 0) / (1024 * 1024);\nif (fileSizeMB > 500) {\n  priority = 'low'; // 大文件降低優先級\n  if (fileSizeMB > 1000) {\n    shouldSync = false;\n    syncReason = 'file_too_large';\n  }\n}\n\nreturn {\n  shouldSync,\n  syncReason,\n  priority,\n  fileInfo: {\n    ...fileInfo,\n    fileSizeMB: Math.round(fileSizeMB * 100) / 100\n  },\n  syncLog,\n  estimatedProcessingTime: Math.max(30, fileSizeMB * 2) // 估算處理時間（秒）\n};"
+      },
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [920, 300],
+      "id": "should-sync",
+      "name": "判斷同步需求"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.shouldSync }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "id": "sync-needed",
+      "name": "需要同步？"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "table": "file_sync_log",
+        "records": [{\n          \"file_id\": \"={{ $json.fileInfo.id }}\",\n          \"file_name\": \"={{ $json.fileInfo.name }}\",\n          \"file_type\": \"={{ $json.fileInfo.name.split('.').pop().toLowerCase() }}\",\n          \"file_size_bytes\": \"={{ $json.fileInfo.size }}\",\n          \"file_modified_time\": \"={{ $json.fileInfo.modifiedTime }}\",\n          \"sync_status\": \"processing\",\n          \"sync_attempts\": \"={{ ($json.syncLog?.sync_attempts || 0) + 1 }}\",\n          \"last_sync_time\": \"={{ new Date().toISOString() }}\"\n        }],\n        \"onConflict\": \"file_id\"\n      },\n      \"type\": \"n8n-nodes-base.supabase\",\n      \"typeVersion\": 1,\n      \"position\": [1320, 200],\n      \"id\": \"update-sync-status\",\n      \"name\": \"更新同步狀態\"\n    },\n    {\n      \"parameters\": {\n        \"functionCode\": \"// 根據優先級決定處理方式\\nconst syncInfo = $node['判斷同步需求'].json;\\nconst priority = syncInfo.priority;\\nconst fileSize = syncInfo.fileInfo.fileSizeMB;\\n\\nlet processingMode = 'immediate';\\nlet delaySeconds = 0;\\n\\nif (priority === 'low' || fileSize > 100) {\\n  // 低優先級或大文件：延遲處理\\n  processingMode = 'delayed';\\n  delaySeconds = Math.min(300, fileSize * 2); // 最多延遲5分鐘\\n} else if (priority === 'high' && fileSize < 10) {\\n  // 高優先級小文件：立即處理\\n  processingMode = 'immediate';\\n  delaySeconds = 0;\\n} else {\\n  // 一般情況：短暫延遲避免頻繁處理\\n  processingMode = 'immediate';\\n  delaySeconds = 10;\\n}\\n\\nreturn {\\n  ...syncInfo,\\n  processingMode,\\n  delaySeconds,\\n  triggerSubworkflow: true\\n};\"\n      },\n      \"type\": \"n8n-nodes-base.function\",\n      \"typeVersion\": 1,\n      \"position\": [1320, 300],\n      \"id\": \"determine-processing\",\n      \"name\": \"決定處理方式\"\n    },\n    {\n      \"parameters\": {\n        \"conditions\": {\n          \"options\": {\n            \"caseSensitive\": true,\n            \"leftValue\": \"\",\n            \"typeValidation\": \"strict\"\n          },\n          \"conditions\": [\n            {\n              \"leftValue\": \"={{ $json.processingMode }}\",\n              \"rightValue\": \"immediate\",\n              \"operator\": {\n                \"type\": \"string\",\n                \"operation\": \"equals\"\n              }\n            }\n          ],\n          \"combinator\": \"and\"\n        },\n        \"options\": {}\n      },\n      \"type\": \"n8n-nodes-base.if\",\n      \"typeVersion\": 2,\n      \"position\": [1520, 300],\n      \"id\": \"immediate-processing\",\n      \"name\": \"立即處理？\"\n    },\n    {\n      \"parameters\": {\n        \"amount\": \"={{ $json.delaySeconds }}\",\n        \"unit\": \"seconds\"\n      },\n      \"type\": \"n8n-nodes-base.wait\",\n      \"typeVersion\": 1.1,\n      \"position\": [1720, 200],\n      \"id\": \"wait-delay\",\n      \"name\": \"等待延遲\"\n    },\n    {\n      \"parameters\": {\n        \"workflowId\": \"{{ $node['Google雲端硬碟數據庫同步到Supabase'].meta.id }}\",\n        \"fields\": {\n          \"values\": [\n            {\n              \"name\": \"fileId\",\n              \"value\": \"={{ $json.fileInfo.id }}\"\n            },\n            {\n              \"name\": \"fileName\",\n              \"value\": \"={{ $json.fileInfo.name }}\"\n            },\n            {\n              \"name\": \"priority\",\n              \"value\": \"={{ $json.priority }}\"\n            },\n            {\n              \"name\": \"triggerSource\",\n              \"value\": \"webhook\"\n            }\n          ]\n        }\n      },\n      \"type\": \"n8n-nodes-base.executeWorkflow\",\n      \"typeVersion\": 1,\n      \"position\": [1720, 300],\n      \"id\": \"trigger-sync-workflow\",\n      \"name\": \"觸發同步工作流\"\n    },\n    {\n      \"parameters\": {\n        \"operation\": \"insert\",\n        \"table\": \"sync_execution_history\",\n        \"records\": [{\n          \"execution_id\": \"webhook_{{ Date.now() }}\",\n          \"execution_status\": \"started\",\n          \"started_at\": \"{{ new Date().toISOString() }}\",\n          \"files_processed\": 1,\n          \"n8n_execution_id\": \"{{ $executionId }}\"\n        }]\n      },\n      \"type\": \"n8n-nodes-base.supabase\",\n      \"typeVersion\": 1,\n      \"position\": [1920, 300],\n      \"id\": \"log-execution\",\n      \"name\": \"記錄執行日誌\"\n    },\n    {\n      \"parameters\": {\n        \"functionCode\": \"// Webhook 回應\\nconst syncInfo = $node['判斷同步需求'].json;\\nconst executionLog = $node['記錄執行日誌'].json;\\n\\nconst response = {\\n  success: true,\\n  message: '文件同步請求已接收',\\n  fileInfo: {\\n    id: syncInfo.fileInfo.id,\\n    name: syncInfo.fileInfo.name,\\n    size: syncInfo.fileInfo.fileSizeMB + ' MB'\\n  },\\n  processing: {\\n    mode: syncInfo.processingMode,\\n    priority: syncInfo.priority,\\n    estimatedTime: syncInfo.estimatedProcessingTime + ' seconds',\\n    reason: syncInfo.syncReason\\n  },\\n  execution: {\\n    id: executionLog.execution_id,\\n    status: 'processing',\\n    startedAt: executionLog.started_at\\n  },\\n  timestamp: new Date().toISOString()\\n};\\n\\nreturn response;\"\n      },\n      \"type\": \"n8n-nodes-base.function\",\n      \"typeVersion\": 1,\n      \"position\": [2120, 300],\n      \"id\": \"webhook-response\",\n      \"name\": \"Webhook回應\"\n    },\n    {\n      \"parameters\": {\n        \"operation\": \"insert\",\n        \"table\": \"file_sync_log\",\n        \"records\": [{\n          \"file_id\": \"ignored_{{ Date.now() }}\",\n          \"file_name\": \"{{ $node['解析Webhook通知'].json.fileName || 'unknown' }}\",\n          \"sync_status\": \"ignored\",\n          \"error_message\": \"不支援的文件類型或狀態: {{ $node['解析Webhook通知'].json.resourceState }}\",\n          \"last_sync_time\": \"{{ new Date().toISOString() }}\"\n        }]\n      },\n      \"type\": \"n8n-nodes-base.supabase\",\n      \"typeVersion\": 1,\n      \"position\": [720, 600],\n      \"id\": \"log-ignored\",\n      \"name\": \"記錄忽略的文件\"\n    },\n    {\n      \"parameters\": {\n        \"operation\": \"insert\",\n        \"table\": \"file_sync_log\",\n        \"records\": [{\n          \"file_id\": \"no_sync_{{ Date.now() }}\",\n          \"file_name\": \"{{ $json.fileInfo.name }}\",\n          \"sync_status\": \"skipped\",\n          \"error_message\": \"無需同步: {{ $json.syncReason }}\",\n          \"last_sync_time\": \"{{ new Date().toISOString() }}\"\n        }]\n      },\n      \"type\": \"n8n-nodes-base.supabase\",\n      \"typeVersion\": 1,\n      \"position\": [1320, 600],\n      \"id\": \"log-skipped\",\n      \"name\": \"記錄跳過的文件\"\n    }\n  ],\n  \"connections\": {\n    \"Drive Webhook\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"解析Webhook通知\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"解析Webhook通知\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"可處理的文件？\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"可處理的文件？\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"檢查同步記錄\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"獲取文件詳情\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ],\n        [\n          {\n            \"node\": \"記錄忽略的文件\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"檢查同步記錄\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"判斷同步需求\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"獲取文件詳情\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"判斷同步需求\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"判斷同步需求\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"需要同步？\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"需要同步？\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"更新同步狀態\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"決定處理方式\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ],\n        [\n          {\n            \"node\": \"記錄跳過的文件\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"決定處理方式\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"立即處理？\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"立即處理？\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"觸發同步工作流\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ],\n        [\n          {\n            \"node\": \"等待延遲\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"等待延遲\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"觸發同步工作流\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"觸發同步工作流\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"記錄執行日誌\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"記錄執行日誌\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Webhook回應\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    }\n  },\n  \"settings\": {\n    \"executionOrder\": \"v1\"\n  },\n  \"staticData\": null,\n  \"meta\": {},\n  \"pinData\": {},\n  \"triggerCount\": 1,\n  \"tags\": [\"webhook\", \"instant-sync\", \"google-drive\", \"real-time\"]\n}"
