@@ -65,15 +65,15 @@
 
 5. **開始使用**
    ```bash
-   # 在 Claude Code 中輸入指令即可開始
-   n8n-mcp
+   # 啟動 n8n-MCP 連接器
+   npm n8n-mcp
    ```
 
 ### 日常使用
 
 ```bash
-# 🚀 在 Claude Code 中連接 MCP 和 n8n
-n8n-mcp
+# 🚀 啟動 n8n-MCP 連接器
+npm n8n-mcp
 
 # 🤖 直接與 AI 助手對話創建工作流
 💬 "幫我設計一個 LINE 聊天機器人工作流"
@@ -108,7 +108,7 @@ mcp-n8n-integration/
 ### Claude Code 指令
 | 指令 | 功能 |
 |------|------|
-| `n8n-mcp` | 🚀 **快速連接 MCP 和 n8n 平台** |
+| `npm n8n-mcp` | 🚀 **啟動 n8n-MCP 連接器，自動連接 MCP 和 n8n 平台** |
 
 ### AI 助手功能 (自動啟用)
 | 功能 | 說明 |
@@ -158,9 +158,9 @@ DEBUG_MODE=false
 
 ### 快速連接 MCP 和 n8n
 
-在 Claude Code 中，只需輸入：
+在任何目錄中，只需輸入：
 ```
-n8n-mcp
+npm n8n-mcp
 ```
 
 這個指令會：
@@ -184,8 +184,8 @@ MCP 助手會自動提供專業建議和 535+ 節點的完整知識！
 ### 範例1：Claude Code 工作流程
 
 ```bash
-# 1. 在 Claude Code 中快速連接
-n8n-mcp
+# 1. 啟動 n8n-MCP 連接器
+npm n8n-mcp
 
 # 2. 直接詢問 AI 助手
 💬 "幫我設計一個自動發送郵件通知的工作流"
@@ -199,8 +199,8 @@ n8n-mcp
 ### 範例2：工作流文件管理
 
 ```bash
-# 1. 啟動連接
-n8n-mcp
+# 1. 啟動 n8n-MCP 連接器
+npm n8n-mcp
 
 # 2. 直接在 Claude Code 中管理文件
 💬 "幫我分析 workflows/current/ 中的工作流文件"
@@ -235,10 +235,10 @@ n8n-mcp
 
 ### 常見問題
 
-**Q: n8n-mcp 指令無反應**
+**Q: npm n8n-mcp 指令無反應**
 ```bash
-# 確認在 Claude Code 中執行
-n8n-mcp
+# 確認已全域安裝
+npm n8n-mcp
 
 # 檢查 MCP 配置文件
 claude-desktop-config.json

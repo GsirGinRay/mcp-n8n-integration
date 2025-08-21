@@ -4,6 +4,9 @@
   "description": "🚀 n8n Workflow Management Tool with Professional MCP Integration",
   "main": "src/index.js",
   "type": "module",
+  "bin": {
+    "n8n-mcp": "./n8n-mcp"
+  },
   "scripts": {
     "start": "node n8n-mcp",
     "setup": "echo \"Setting up n8n MCP integration...\" && npx @czlonkowski/n8n-mcp@latest --help",
