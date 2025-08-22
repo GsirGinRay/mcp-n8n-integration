@@ -99,10 +99,11 @@ mcp-n8n-integration/
 ├── 📄 claude-desktop-config.example.json # MCP 配置模板
 ├── 📄 claude-desktop-config.json # MCP 連接配置 (需自行創建)
 ├── 📁 workflows/                # 工作流管理中心
+│   ├── 📁 templates/            # 📋 工作流基礎模板
 │   ├── 📁 current/              # 🔨 開發中的工作流
-│   ├── 📁 archive/              # 📦 已完成的工作流
-│   ├── 📁 templates/            # 📋 工作流模板
-│   └── 📁 backup/               # 💾 自動備份
+│   ├── 📁 complete/             # ✅ 已完成穩定的工作流
+│   ├── 📁 archive/              # 📦 舊版本或已棄用的工作流
+│   └── 📁 backup/               # 💾 重要工作流備份
 └── 📄 .gitignore                # 安全保護設定
 ```
 
@@ -294,6 +295,6 @@ claude-desktop-config.json
 
 ⭐ 如果這個專案對你有幫助，請給個星星支持！
 
-🤖 **v3.1 斜線命令更新**: 新增 `/n8n-mcp` 自定義斜線命令，一鍵啟動更便捷！自動載入 535+ n8n 節點知識，每次創建工作流都有專業 AI 助手指導！
+🤖 **v3.2 工作流管理優化**: 新增 `/n8n-mcp` 自定義斜線命令，優化工作流組織結構！自動載入 535+ n8n 節點知識，完整的開發生命週期管理：templates → current → complete → archive，每次創建工作流都有專業 AI 助手指導！
 
 📺 敬請期待完整的教學影片！

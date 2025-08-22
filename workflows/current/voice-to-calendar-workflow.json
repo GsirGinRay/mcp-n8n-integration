@@ -1,0 +1,193 @@
+{
+  "name": "語音自動加入Google日曆行程",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voice-calendar",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook語音輸入",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "transcribe",
+        "audioInput": "={{ $json.audioFile }}",
+        "language": "zh-TW",
+        "options": {
+          "model": "latest_long"
+        }
+      },
+      "id": "speech-to-text",
+      "name": "語音轉文字",
+      "type": "n8n-nodes-base.googleSpeechToText",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "google-speech-credentials",
+          "name": "Google Speech API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 自然語言處理 - 提取日期時間和事件信息\nconst text = $input.first().json.transcription;\n\n// 日期時間模式匹配\nconst patterns = {\n  date: /(今天|明天|後天|下週|([0-9]{1,2}月[0-9]{1,2}日)|([0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日))/g,\n  time: /(上午|下午|早上|晚上)?([0-9]{1,2})[:點]?([0-9]{1,2}分?)?/g,\n  event: /(會議|開會|約會|聚餐|運動|健身|上課|工作|面試)/g\n};\n\n// 提取信息\nconst dateMatch = text.match(patterns.date);\nconst timeMatch = text.match(patterns.time);\nconst eventMatch = text.match(patterns.event);\n\n// 解析日期\nlet eventDate = new Date();\nif (dateMatch) {\n  const dateStr = dateMatch[0];\n  if (dateStr === '今天') {\n    // 保持當前日期\n  } else if (dateStr === '明天') {\n    eventDate.setDate(eventDate.getDate() + 1);\n  } else if (dateStr === '後天') {\n    eventDate.setDate(eventDate.getDate() + 2);\n  }\n  // 可以添加更多日期解析邏輯\n}\n\n// 解析時間\nlet eventTime = '09:00';\nif (timeMatch) {\n  const timeStr = timeMatch[0];\n  const hourMatch = timeStr.match(/([0-9]{1,2})/g);\n  if (hourMatch) {\n    let hour = parseInt(hourMatch[0]);\n    if (timeStr.includes('下午') || timeStr.includes('晚上')) {\n      hour += 12;\n    }\n    eventTime = `${hour.toString().padStart(2, '0')}:00`;\n  }\n}\n\n// 生成事件標題\nlet summary = text;\nif (eventMatch) {\n  summary = `${eventMatch[0]} - ${text.substring(0, 50)}`;\n}\n\nreturn {\n  originalText: text,\n  summary: summary,\n  startDate: eventDate.toISOString().split('T')[0],\n  startTime: eventTime,\n  description: `語音輸入: ${text}`\n};"
+      },
+      "id": "text-parser",
+      "name": "文字解析提取",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "calendarId": "primary",
+        "summary": "={{ $json.summary }}",
+        "start": {
+          "dateTime": "={{ $json.startDate }}T{{ $json.startTime }}:00+08:00"
+        },
+        "end": {
+          "dateTime": "={{ new Date(new Date($json.startDate + 'T' + $json.startTime + ':00+08:00').getTime() + 3600000).toISOString() }}"
+        },
+        "description": "={{ $json.description }}",
+        "additionalFields": {
+          "sendNotifications": true
+        }
+      },
+      "id": "create-calendar-event",
+      "name": "創建日曆事件",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1,
+      "position": [
+        900,
+        300
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "google-calendar-credentials",
+          "name": "Google Calendar API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \n  \"success\": true,\n  \"message\": \"日曆事件已成功創建\",\n  \"eventId\": $json.id,\n  \"summary\": $('text-parser').first().json.summary,\n  \"startTime\": $('text-parser').first().json.startDate + 'T' + $('text-parser').first().json.startTime\n} }}"
+      },
+      "id": "success-response",
+      "name": "成功回應",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \n  \"success\": false,\n  \"message\": \"創建日曆事件時發生錯誤\",\n  \"error\": $json.error || '未知錯誤'\n} }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "error-response",
+      "name": "錯誤回應",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook語音輸入": {
+      "main": [
+        [
+          {
+            "node": "語音轉文字",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "語音轉文字": {
+      "main": [
+        [
+          {
+            "node": "文字解析提取",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "文字解析提取": {
+      "main": [
+        [
+          {
+            "node": "創建日曆事件",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "創建日曆事件": {
+      "main": [
+        [
+          {
+            "node": "成功回應",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "errorWorkflow": {
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "n8n-mcp-voice-calendar"
+  },
+  "id": "voice-to-calendar-workflow",
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "voice-automation",
+      "name": "語音自動化"
+    },
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z", 
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "calendar-integration",
+      "name": "日曆整合"
+    }
+  ]
+}
