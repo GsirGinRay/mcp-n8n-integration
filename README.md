@@ -49,8 +49,8 @@
 
 3. **Claude Code 準備就緒**
    ```bash
-   # 無需額外設置，直接在 Claude Code 中使用
-   # MCP 已自動配置完成
+   # 無需額外設置，自定義斜線命令已配置
+   # MCP 已自動配置完成，支援 /n8n-mcp 一鍵啟動
    ```
 
 4. **配置 MCP 連接**
@@ -65,15 +65,18 @@
 
 5. **開始使用**
    ```bash
-   # 啟動 n8n-MCP 連接器
-   npm n8n-mcp
+   # 方法1: 使用自定義斜線命令 (推薦)
+   /n8n-mcp
+   
+   # 方法2: 使用 npm 指令
+   npm run n8n-mcp
    ```
 
 ### 日常使用
 
 ```bash
-# 🚀 啟動 n8n-MCP 連接器
-npm n8n-mcp
+# 🚀 啟動 n8n-MCP 連接器 (推薦使用斜線命令)
+/n8n-mcp
 
 # 🤖 直接與 AI 助手對話創建工作流
 💬 "幫我設計一個 LINE 聊天機器人工作流"
@@ -108,7 +111,8 @@ mcp-n8n-integration/
 ### Claude Code 指令
 | 指令 | 功能 |
 |------|------|
-| `npm n8n-mcp` | 🚀 **啟動 n8n-MCP 連接器，自動連接 MCP 和 n8n 平台** |
+| `/n8n-mcp` | 🚀 **啟動 n8n-MCP 連接器，自動連接 MCP 和 n8n 平台** |
+| `npm run n8n-mcp` | 🔧 **傳統 npm 方式啟動 (備用方案)** |
 
 ### AI 助手功能 (自動啟用)
 | 功能 | 說明 |
@@ -160,7 +164,7 @@ DEBUG_MODE=false
 
 在任何目錄中，只需輸入：
 ```
-npm n8n-mcp
+/n8n-mcp
 ```
 
 這個指令會：
@@ -185,7 +189,7 @@ MCP 助手會自動提供專業建議和 535+ 節點的完整知識！
 
 ```bash
 # 1. 啟動 n8n-MCP 連接器
-npm n8n-mcp
+/n8n-mcp
 
 # 2. 直接詢問 AI 助手
 💬 "幫我設計一個自動發送郵件通知的工作流"
@@ -200,7 +204,7 @@ npm n8n-mcp
 
 ```bash
 # 1. 啟動 n8n-MCP 連接器
-npm n8n-mcp
+/n8n-mcp
 
 # 2. 直接在 Claude Code 中管理文件
 💬 "幫我分析 workflows/current/ 中的工作流文件"
@@ -235,10 +239,13 @@ npm n8n-mcp
 
 ### 常見問題
 
-**Q: npm n8n-mcp 指令無反應**
+**Q: /n8n-mcp 指令無反應**
 ```bash
-# 確認已全域安裝
-npm n8n-mcp
+# 確認 Claude Code 已載入自定義指令
+ls .claude/commands/
+
+# 或使用備用方案
+npm run n8n-mcp
 
 # 檢查 MCP 配置文件
 claude-desktop-config.json
@@ -287,6 +294,6 @@ claude-desktop-config.json
 
 ⭐ 如果這個專案對你有幫助，請給個星星支持！
 
-🤖 **v2.1 MCP 增強更新**: 自動載入 535+ n8n 節點知識，每次創建工作流都有專業 AI 助手指導！
+🤖 **v3.1 斜線命令更新**: 新增 `/n8n-mcp` 自定義斜線命令，一鍵啟動更便捷！自動載入 535+ n8n 節點知識，每次創建工作流都有專業 AI 助手指導！
 
 📺 敬請期待完整的教學影片！

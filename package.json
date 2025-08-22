@@ -1,6 +1,6 @@
 {
   "name": "n8n-workflow-manager-mcp",
-  "version": "2.0.0",
+  "version": "3.1.0",
   "description": "🚀 n8n Workflow Management Tool with Professional MCP Integration",
   "main": "src/index.js",
   "type": "module",
@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node n8n-mcp",
+    "n8n-mcp": "node n8n-mcp",
     "setup": "echo \"Setting up n8n MCP integration...\" && npx @czlonkowski/n8n-mcp@latest --help",
     "test": "echo \"Testing workflow management...\" && workflow-manager list"
   },
